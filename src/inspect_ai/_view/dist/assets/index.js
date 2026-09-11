@@ -36995,7 +36995,7 @@ var usePrismHighlight = (containerRef, contentLength) => {
 				highlightCodeBlocks(container);
 			});
 			const observer = new MutationObserver((mutations) => {
-				if (mutations.some(_temp2$61)) highlightCodeBlocks(container);
+				if (mutations.some(_temp2$62)) highlightCodeBlocks(container);
 			});
 			observer.observe(container, {
 				childList: true,
@@ -37020,7 +37020,7 @@ function _temp$105(node) {
 	if (node instanceof Element) return node.querySelector("pre code") || node.matches("pre code");
 	return false;
 }
-function _temp2$61(mutation) {
+function _temp2$62(mutation) {
 	if (mutation.type === "childList") return Array.from(mutation.addedNodes).some(_temp$105);
 	return false;
 }
@@ -37715,7 +37715,7 @@ var useBreadcrumbTruncation = (segments, containerRef) => {
 					replaceMeasurementItems(testElement, [
 						firstSegment.text,
 						"...",
-						...segments.slice(segments.length - 1 - endCount, -1).map(_temp2$60),
+						...segments.slice(segments.length - 1 - endCount, -1).map(_temp2$61),
 						lastSegment.text
 					]);
 					if (testElement.scrollWidth <= containerWidth) {
@@ -37756,7 +37756,7 @@ var useBreadcrumbTruncation = (segments, containerRef) => {
 function _temp$103(segment) {
 	return segment.text;
 }
-function _temp2$60(segment_0) {
+function _temp2$61(segment_0) {
 	return segment_0.text;
 }
 //#endregion
@@ -38481,7 +38481,7 @@ var AutocompleteInput = (t0) => {
 					e_1.stopPropagation();
 					onCommit?.();
 				} else if (e_1.key === "ArrowDown" || e_1.key === "ArrowUp") {
-					const hasOptions = suggestions.some(_temp2$59);
+					const hasOptions = suggestions.some(_temp2$60);
 					if (filteredSuggestions.length > 0 || hasOptions) {
 						e_1.preventDefault();
 						e_1.stopPropagation();
@@ -38678,7 +38678,7 @@ var AutocompleteInput = (t0) => {
 function _temp$102(s) {
 	return s !== null;
 }
-function _temp2$59(s_1) {
+function _temp2$60(s_1) {
 	return s_1 !== null;
 }
 function _temp3$45(prev) {
@@ -67527,7 +67527,7 @@ var logInfoSignature = (info) => `${info.size}:${info.etag ?? ""}`;
 	const result = useAsyncDataFromQuery(t4);
 	let t5;
 	if ($[14] !== enabled || $[15] !== result) {
-		t5 = enabled ? map$1(result, _temp2$58) : data(void 0);
+		t5 = enabled ? map$1(result, _temp2$59) : data(void 0);
 		$[14] = enabled;
 		$[15] = result;
 		$[16] = t5;
@@ -67557,7 +67557,7 @@ var logInfoSignature = (info) => `${info.size}:${info.etag ?? ""}`;
 function _temp$95(query) {
 	return query.state.status === "error" ? false : pendingSamplesIntervalMs(query.state.data);
 }
-function _temp2$58(data) {
+function _temp2$59(data) {
 	return data ?? void 0;
 }
 function _temp3$44(data) {
@@ -69614,7 +69614,7 @@ var mergeSampleSummaries = (logSamples, pendingSamples) => {
 		t3 = map$1(compose({
 			rows,
 			pending
-		}), _temp2$57);
+		}), _temp2$58);
 		$[8] = pending;
 		$[9] = rows;
 		$[10] = t3;
@@ -69628,7 +69628,7 @@ var mergeSampleSummaries = (logSamples, pendingSamples) => {
 function _temp$94(row) {
 	return row.summary;
 }
-function _temp2$57(settled) {
+function _temp2$58(settled) {
 	return mergeSampleSummaries(settled.rows.map(_temp$94), settled.pending?.samples ?? []);
 }
 //#endregion
@@ -73074,7 +73074,7 @@ var hasHtmlEscape = (v) => isPlainObject$1(v) && "_html" in v && v._html != null
 	const baseId = id ?? "metadata-grid";
 	const allEntries = entryRecords(entries);
 	const scalars = allEntries.filter(_temp$92);
-	const groups = allEntries.filter(_temp2$56);
+	const groups = allEntries.filter(_temp2$57);
 	const [expanded, setExpanded] = (0, import_react.useState)(false);
 	const isCollapsible = maxRows != null && scalars.length > maxRows;
 	const visibleScalars = isCollapsible && !expanded ? scalars.slice(0, maxRows) : scalars;
@@ -73204,7 +73204,7 @@ var entryRecords = (entries) => {
 function _temp$92(e) {
 	return !isNonEmptyObject(e.value) || hasHtmlEscape(e.value);
 }
-function _temp2$56(e_0) {
+function _temp2$57(e_0) {
 	return isNonEmptyObject(e_0.value) && !hasHtmlEscape(e_0.value);
 }
 function _temp3$43(prev) {
@@ -74762,9 +74762,10 @@ var isValidView = (view) => {
 	return true;
 };
 var ServerToolCall_module_default = {
-	tool: "_tool_13xcg_1",
-	execOutput: "_execOutput_13xcg_5",
-	execError: "_execError_13xcg_16"
+	tool: "_tool_18myc_1",
+	execOutput: "_execOutput_18myc_5",
+	execError: "_execError_18myc_16",
+	webArgs: "_webArgs_18myc_20"
 };
 //#endregion
 //#region ../../packages/inspect-components/src/chat/server-tools/ServerToolCall.tsx
@@ -74774,122 +74775,138 @@ var ServerToolCall_module_default = {
 * grammar with a globe icon and a neutral "server" pill as the only server
 * signals.
 */ var ServerToolCall = (t0) => {
-	const $ = (0, import_compiler_runtime.c)(51);
+	const $ = (0, import_compiler_runtime.c)(52);
 	const { id, content, flush: t1, className } = t0;
 	const flush = t1 === void 0 ? true : t1;
 	let T0;
 	let codeExecutionResult;
 	let hasResult;
-	let inputArgs;
 	let listToolsResult;
 	let t2;
 	let t3;
 	let t4;
 	let t5;
 	let t6;
+	let t7;
+	let t8;
+	let t9;
 	let webSearchResult;
-	if ($[0] !== content || $[1] !== flush || $[2] !== id) {
+	if ($[0] !== className || $[1] !== content || $[2] !== flush || $[3] !== id) {
 		const args = resolveArgs(content);
-		const title = content.context ? `${content.context} — ${content.name}` : content.name;
+		const webArgs = content.tool_type === "web_search";
+		let t10;
+		if ($[17] === Symbol.for("react.memo_cache_sentinel")) {
+			t10 = {
+				search: "Web search",
+				open_page: "Open page",
+				find_in_page: "Find in page"
+			};
+			$[17] = t10;
+		} else t10 = $[17];
+		const displayName = webArgs ? t10[content.name] ?? content.name : content.name;
+		const title = content.context ? `${content.context} — ${displayName}` : displayName;
 		const summaryArgs = {};
-		inputArgs = [];
+		const inputArgs = [];
 		for (const [key, value] of Object.entries(args)) if (typeof value === "string" && value.includes("\n")) inputArgs.push([key, value]);
 		else summaryArgs[key] = value;
-		let t7;
-		if ($[14] !== content) {
-			t7 = maybeListTools(content);
-			$[14] = content;
-			$[15] = t7;
-		} else t7 = $[15];
-		listToolsResult = t7;
-		let t8;
-		if ($[16] !== content) {
-			t8 = maybeWebSearchResult(content);
-			$[16] = content;
-			$[17] = t8;
-		} else t8 = $[17];
-		webSearchResult = t8;
-		let t9;
+		let t11;
 		if ($[18] !== content) {
-			t9 = maybeCodeExecution(content);
+			t11 = maybeListTools(content);
 			$[18] = content;
-			$[19] = t9;
-		} else t9 = $[19];
-		codeExecutionResult = t9;
+			$[19] = t11;
+		} else t11 = $[19];
+		listToolsResult = t11;
+		let t12;
+		if ($[20] !== content) {
+			t12 = maybeWebSearchResult(content);
+			$[20] = content;
+			$[21] = t12;
+		} else t12 = $[21];
+		webSearchResult = t12;
+		let t13;
+		if ($[22] !== content) {
+			t13 = maybeCodeExecution(content);
+			$[22] = content;
+			$[23] = t13;
+		} else t13 = $[23];
+		codeExecutionResult = t13;
 		const execHasOutput = !!codeExecutionResult && (!!codeExecutionResult.stdout || !!codeExecutionResult.stderr || codeExecutionResult.encrypted || (codeExecutionResult.returnCode ?? 0) !== 0);
-		let t10;
-		if ($[20] !== codeExecutionResult || $[21] !== content.error || $[22] !== content.result || $[23] !== execHasOutput || $[24] !== listToolsResult || $[25] !== webSearchResult) {
-			t10 = !!content.error || !!listToolsResult || !!webSearchResult || (codeExecutionResult ? execHasOutput : hasResultContent(content.result));
-			$[20] = codeExecutionResult;
-			$[21] = content.error;
-			$[22] = content.result;
-			$[23] = execHasOutput;
-			$[24] = listToolsResult;
-			$[25] = webSearchResult;
-			$[26] = t10;
-		} else t10 = $[26];
-		hasResult = t10;
+		let t14;
+		if ($[24] !== codeExecutionResult || $[25] !== content.error || $[26] !== content.result || $[27] !== execHasOutput || $[28] !== listToolsResult || $[29] !== webSearchResult) {
+			t14 = !!content.error || !!listToolsResult || !!webSearchResult || (codeExecutionResult ? execHasOutput : hasResultContent(content.result));
+			$[24] = codeExecutionResult;
+			$[25] = content.error;
+			$[26] = content.result;
+			$[27] = execHasOutput;
+			$[28] = listToolsResult;
+			$[29] = webSearchResult;
+			$[30] = t14;
+		} else t14 = $[30];
+		hasResult = t14;
 		T0 = ToolBlock;
 		t2 = id;
 		t3 = flush;
-		if ($[27] !== content.name) {
+		if ($[31] !== content.name) {
 			t4 = iconForTool(content.name, { server: true });
-			$[27] = content.name;
-			$[28] = t4;
-		} else t4 = $[28];
+			$[31] = content.name;
+			$[32] = t4;
+		} else t4 = $[32];
 		t5 = title;
-		t6 = argsSummary(summaryArgs);
-		$[0] = content;
-		$[1] = flush;
-		$[2] = id;
-		$[3] = T0;
-		$[4] = codeExecutionResult;
-		$[5] = hasResult;
-		$[6] = inputArgs;
+		t6 = webArgs ? void 0 : argsSummary(summaryArgs);
+		t7 = "server";
+		t8 = className;
+		t9 = webArgs && Object.keys(args).length > 0 ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockInput, { children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)("dl", {
+			className: ServerToolCall_module_default.webArgs,
+			children: Object.entries(args).map(_temp$88)
+		}) }) : inputArgs.length > 0 ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockInput, { children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ExpandablePanel, {
+			id: `${id}-input`,
+			collapse: true,
+			border: false,
+			lines: 20,
+			className: "text-size-small",
+			children: inputArgs.map((t15) => {
+				const [key_1, value_1] = t15;
+				return /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolInput, {
+					contentType: content.tool_type === "code_execution" ? "python" : void 0,
+					contents: value_1
+				}, key_1);
+			})
+		}) }) : null;
+		$[0] = className;
+		$[1] = content;
+		$[2] = flush;
+		$[3] = id;
+		$[4] = T0;
+		$[5] = codeExecutionResult;
+		$[6] = hasResult;
 		$[7] = listToolsResult;
 		$[8] = t2;
 		$[9] = t3;
 		$[10] = t4;
 		$[11] = t5;
 		$[12] = t6;
-		$[13] = webSearchResult;
+		$[13] = t7;
+		$[14] = t8;
+		$[15] = t9;
+		$[16] = webSearchResult;
 	} else {
-		T0 = $[3];
-		codeExecutionResult = $[4];
-		hasResult = $[5];
-		inputArgs = $[6];
+		T0 = $[4];
+		codeExecutionResult = $[5];
+		hasResult = $[6];
 		listToolsResult = $[7];
 		t2 = $[8];
 		t3 = $[9];
 		t4 = $[10];
 		t5 = $[11];
 		t6 = $[12];
-		webSearchResult = $[13];
+		t7 = $[13];
+		t8 = $[14];
+		t9 = $[15];
+		webSearchResult = $[16];
 	}
-	let t7;
-	if ($[29] !== content.tool_type || $[30] !== id || $[31] !== inputArgs) {
-		t7 = inputArgs.length > 0 ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockInput, { children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ExpandablePanel, {
-			id: `${id}-input`,
-			collapse: true,
-			border: false,
-			lines: 20,
-			className: "text-size-small",
-			children: inputArgs.map((t8) => {
-				const [key_0, value_0] = t8;
-				return /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolInput, {
-					contentType: content.tool_type === "code_execution" ? "python" : void 0,
-					contents: value_0
-				}, key_0);
-			})
-		}) }) : null;
-		$[29] = content.tool_type;
-		$[30] = id;
-		$[31] = inputArgs;
-		$[32] = t7;
-	} else t7 = $[32];
-	let t8;
+	let t10;
 	if ($[33] !== codeExecutionResult || $[34] !== content.error || $[35] !== content.result || $[36] !== hasResult || $[37] !== id || $[38] !== listToolsResult || $[39] !== webSearchResult) {
-		t8 = hasResult ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockOutput, { children: content.error ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolCallErrorView, { error: {
+		t10 = hasResult ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockOutput, { children: content.error ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolCallErrorView, { error: {
 			type: "unknown",
 			message: content.error
 		} }) : webSearchResult ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(WebSearchResults, {
@@ -74922,22 +74939,22 @@ var ServerToolCall_module_default = {
 		$[37] = id;
 		$[38] = listToolsResult;
 		$[39] = webSearchResult;
-		$[40] = t8;
-	} else t8 = $[40];
-	let t9;
-	if ($[41] !== T0 || $[42] !== className || $[43] !== t2 || $[44] !== t3 || $[45] !== t4 || $[46] !== t5 || $[47] !== t6 || $[48] !== t7 || $[49] !== t8) {
-		t9 = /*#__PURE__*/ (0, import_jsx_runtime.jsxs)(T0, {
+		$[40] = t10;
+	} else t10 = $[40];
+	let t11;
+	if ($[41] !== T0 || $[42] !== t10 || $[43] !== t2 || $[44] !== t3 || $[45] !== t4 || $[46] !== t5 || $[47] !== t6 || $[48] !== t7 || $[49] !== t8 || $[50] !== t9) {
+		t11 = /*#__PURE__*/ (0, import_jsx_runtime.jsxs)(T0, {
 			id: t2,
 			flush: t3,
 			icon: t4,
 			title: t5,
 			summary: t6,
-			pill: "server",
-			className,
-			children: [t7, t8]
+			pill: t7,
+			className: t8,
+			children: [t9, t10]
 		});
 		$[41] = T0;
-		$[42] = className;
+		$[42] = t10;
 		$[43] = t2;
 		$[44] = t3;
 		$[45] = t4;
@@ -74946,8 +74963,9 @@ var ServerToolCall_module_default = {
 		$[48] = t7;
 		$[49] = t8;
 		$[50] = t9;
-	} else t9 = $[50];
-	return t9;
+		$[51] = t11;
+	} else t11 = $[51];
+	return t11;
 };
 var WebSearchResults = (t0) => {
 	const $ = (0, import_compiler_runtime.c)(5);
@@ -74955,7 +74973,7 @@ var WebSearchResults = (t0) => {
 	const t1 = `${id}-output`;
 	let t2;
 	if ($[0] !== results) {
-		t2 = results.map(_temp$88);
+		t2 = results.map(_temp2$56);
 		$[0] = results;
 		$[1] = t2;
 	} else t2 = $[1];
@@ -75145,7 +75163,11 @@ var maybeListTools = (content) => {
 };
 /** Shallow: the list below renders title and url, and skips entries lacking them. */ var isWebResult = (value) => isRecord(value) && typeof value["title"] === "string" && typeof value["url"] === "string";
 /** Shallow: the list below keys on name and renders description. */ var isToolInfo = (value) => isRecord(value) && typeof value["name"] === "string";
-function _temp$88(result, index) {
+function _temp$88(t0) {
+	const [key_0, value_0] = t0;
+	return /*#__PURE__*/ (0, import_jsx_runtime.jsxs)("div", { children: [/*#__PURE__*/ (0, import_jsx_runtime.jsx)("dt", { children: key_0 }), /*#__PURE__*/ (0, import_jsx_runtime.jsx)("dd", { children: typeof value_0 === "string" ? value_0 : JSON.stringify(value_0, null, 2) })] }, key_0);
+}
+function _temp2$56(result, index) {
 	return /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", { children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)("a", {
 		href: result.url,
 		target: "_blank",
@@ -77409,7 +77431,6 @@ function messageHasVisibleContent(message) {
 	if (typeof content === "string") return content.trim().length > 0;
 	if (!Array.isArray(content)) return false;
 	return content.some((c) => {
-		if (c.type === "tool_use") return false;
 		if (c.type === "text") {
 			const hasText = c.text.trim().length > 0;
 			const hasCitations = !!c.citations && c.citations.length > 0;

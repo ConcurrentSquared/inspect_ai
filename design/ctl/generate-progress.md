@@ -147,3 +147,25 @@ The binding constraint (`endpoint-cost-audit.md`): the samples handler shares th
 2. **Labeled token estimates** for chunk-only providers (OpenAI-compatible until the final usage chunk) — *deferred*: ship without estimates (heartbeat + null tokens) and let demand decide whether an `"estimated": true` variant is worth it.
 3. **Should `sample list` surface `last_progress_at` distinctly from `idle`** (e.g. for streamed calls, "stream quiet for M:SS")? — *resolved*: no; the single upgraded idle number suffices. The JSON carries both regardless, so agents can compute anything.
 4. **The retry backoff window** (see the known gap under layer 1) — *resolved: ships inside layer 1*. The gap is real — idle misreads during rate-limit backoffs, precisely when operators most suspect a stall — and although the fix needs its own plumbing (a per-sample record stamped from `on_before_sleep`, since no pending event exists during the wait) rather than the pending-events read the rest of layer 1 reuses, the layer's whole point is that a healthy-but-waiting sample must not read as hung, and a rate-limited sample is the commonest healthy-but-waiting case.
+
+
+### OpenAI Responses dashboard snapshots
+
+OpenAI Responses now requests streaming for pending transcript events even without
+`on_stream` (explicit `streaming=False` still wins). Its independent display-content
+channel publishes text, reasoning, and server-tool items using existing content
+schemas. Tool item start/done events replace the same id in place, and flush at
+these boundaries so a tool with no intermediate chunks is visible immediately.
+Text and reasoning remain throttled to once per second. Callback events retain
+their existing schema and do not duplicate display accumulation. Model-event sinks
+remain excluded; retry, failure, and cancellation discard partial snapshots through
+the existing observer lifecycle. Final output and replay caches still come from
+the terminal provider response, never the display accumulator.
+
+The shared viewer treats server-tool-only pending messages as visible content.
+Web search actions render arguments on labeled, wrapping lines (including OpenAI
+search queries, open-page URLs, and find patterns). No provider-hidden search or
+page contents are synthesized. This changes pending ModelEvent output semantics,
+not its schema: realtime buffer/transcript subscribers and the dashboard consume
+the snapshots; final log readers, dataframes, hooks, replay, and sibling packages
+continue to receive the existing completed response format.

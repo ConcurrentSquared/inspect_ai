@@ -1956,11 +1956,11 @@ a._citationLink_1ggvf_9:hover {
   overflow-wrap: anywhere !important;
   white-space: pre-wrap !important;
 }
-._tool_13xcg_1 {
+._tool_18myc_1 {
   margin-bottom: 0.5em;
 }
 
-._execOutput_13xcg_5 {
+._execOutput_18myc_5 {
   margin: 0;
   padding: 0;
   background-color: transparent;
@@ -1971,8 +1971,27 @@ a._citationLink_1ggvf_9:hover {
   overflow-wrap: anywhere;
 }
 
-._execError_13xcg_16 {
+._execError_18myc_16 {
   color: var(--inspect-tool-error-color);
+}
+
+._webArgs_18myc_20 {
+  margin: 0;
+  font-size: var(--inspect-font-size-smaller);
+}
+
+._webArgs_18myc_20 > div + div {
+  margin-top: 0.5em;
+}
+
+._webArgs_18myc_20 dt {
+  font-weight: 600;
+}
+
+._webArgs_18myc_20 dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 ._toolImage_1cvly_1 {
   max-width: 800px;

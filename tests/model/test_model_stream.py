@@ -40,6 +40,7 @@ from inspect_ai.model import (
 from inspect_ai.model._registry import modelapi
 from inspect_ai.model._stream import (
     model_stream_requested,
+    report_model_stream_content,
     report_model_stream_delta,
     report_model_stream_progress,
     report_model_stream_restart,
@@ -823,8 +824,10 @@ class FakeCancellation(BaseException):
     """Non-Exception BaseException, exercising the wrapper's cancellation path."""
 
 
+@pytest.mark.parametrize("callback", [True, False])
 async def test_partial_output_discard_on_cancellation_notifies_transcript(
     monkeypatch: pytest.MonkeyPatch,
+    callback: bool,
 ) -> None:
     """Cancellation mid-stream must push the snapshot reset to live views.
 
@@ -846,11 +849,14 @@ async def test_partial_output_discard_on_cancellation_notifies_transcript(
     monkeypatch.setattr(Transcript, "_event_updated", recording_event_updated)
 
     async def attempt(api: ScriptedStreamAPI) -> ModelOutput:
-        await report_model_stream_delta(StreamTextEvent(text="doomed"))
+        if callback:
+            await report_model_stream_delta(StreamTextEvent(text="doomed"))
+        else:
+            report_model_stream_content(StreamTextEvent(text="doomed"))
         raise FakeCancellation()
 
     with pytest.raises(FakeCancellation):
-        await _scripted_generate([attempt], on_stream=Collector())
+        await _scripted_generate([attempt], on_stream=Collector() if callback else None)
     event = ScriptedStreamAPI.events[0]
     # finalization stays with the interrupt machinery — still pending
     assert event.pending is True

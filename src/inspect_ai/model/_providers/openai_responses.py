@@ -16,19 +16,23 @@ from openai import (
 from openai._types import NOT_GIVEN
 from openai.types.responses import (
     Response,
+    ResponseCodeInterpreterToolCall,
     ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFailedEvent,
     ResponseFormatTextJSONSchemaConfigParam,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionToolCall,
+    ResponseFunctionWebSearch,
     ResponseIncompleteEvent,
     ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
     ResponseReasoningSummaryTextDeltaEvent,
     ResponseReasoningTextDeltaEvent,
     ResponseTextDeltaEvent,
     ToolParam,
 )
+from openai.types.responses.response_output_item import McpCall, McpListTools
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -37,6 +41,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+from inspect_ai._util.content import ContentToolUse
 from inspect_ai._util.httpx import log_httpx_retry_attempt
 from inspect_ai._util.logger import warn_once
 from inspect_ai.log._samples import set_active_model_event_call
@@ -58,6 +63,9 @@ from .._openai import (
 )
 from .._openai_responses import (
     ResponsesModelInfo,
+    code_interpreter_to_tool_use,
+    mcp_call_to_tool_use,
+    mcp_list_tools_to_tool_use,
     model_usage_from_response_usage,
     openai_responses_chat_choices,
     openai_responses_inputs,
@@ -66,12 +74,15 @@ from .._openai_responses import (
     responses_extra_body_fields,
     should_swap_todo_write,
     substitute_update_plan_tools,
+    web_search_to_tool_use,
 )
 from .._stream import (
     StreamReasoningEvent,
     StreamTextEvent,
     StreamToolCallEvent,
+    model_stream_partial_requested,
     model_stream_requested,
+    report_model_stream_content,
     report_model_stream_delta,
     report_model_stream_progress,
     report_model_stream_start,
@@ -292,6 +303,48 @@ async def _generate_responses_stream(
     # (error events raise below; cancellation can land mid-iteration)
     async with stream:
         async for event in stream:
+            if model_stream_partial_requested():
+                if isinstance(event, ResponseTextDeltaEvent):
+                    report_model_stream_content(StreamTextEvent(text=event.delta))
+                elif isinstance(
+                    event,
+                    (
+                        ResponseReasoningTextDeltaEvent,
+                        ResponseReasoningSummaryTextDeltaEvent,
+                    ),
+                ):
+                    report_model_stream_content(
+                        StreamReasoningEvent(reasoning=event.delta)
+                    )
+                elif isinstance(
+                    event, (ResponseOutputItemAddedEvent, ResponseOutputItemDoneEvent)
+                ):
+                    output_item = event.item
+                    if isinstance(output_item, ResponseFunctionWebSearch):
+                        report_model_stream_content(
+                            web_search_to_tool_use(output_item)
+                            if getattr(output_item, "action", None) is not None
+                            else ContentToolUse(
+                                tool_type="web_search",
+                                id=output_item.id,
+                                name="web_search",
+                                arguments="",
+                                result="",
+                                error="failed"
+                                if output_item.status == "failed"
+                                else None,
+                            )
+                        )
+                    elif isinstance(output_item, ResponseCodeInterpreterToolCall):
+                        report_model_stream_content(
+                            code_interpreter_to_tool_use(output_item)
+                        )
+                    elif isinstance(output_item, McpCall):
+                        report_model_stream_content(mcp_call_to_tool_use(output_item))
+                    elif isinstance(output_item, McpListTools):
+                        report_model_stream_content(
+                            mcp_list_tools_to_tool_use(output_item)
+                        )
             if isinstance(
                 event,
                 (ResponseCompletedEvent, ResponseIncompleteEvent, ResponseFailedEvent),
@@ -314,7 +367,9 @@ async def _generate_responses_stream(
                 # report_model_stream_delta); heartbeat only
                 report_model_stream_progress()
             elif isinstance(event, ResponseTextDeltaEvent):
-                await report_model_stream_delta(StreamTextEvent(text=event.delta))
+                await report_model_stream_delta(
+                    StreamTextEvent(text=event.delta), publish_partial=False
+                )
             elif isinstance(
                 event,
                 (
@@ -323,7 +378,7 @@ async def _generate_responses_stream(
                 ),
             ):
                 await report_model_stream_delta(
-                    StreamReasoningEvent(reasoning=event.delta)
+                    StreamReasoningEvent(reasoning=event.delta), publish_partial=False
                 )
             elif isinstance(event, ResponseOutputItemAddedEvent):
                 if isinstance(event.item, ResponseFunctionToolCall) and event.item.id:

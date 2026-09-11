@@ -2717,3 +2717,147 @@ def test_maybe_code_interpreter_tool_model_gating(model_name, expected):
         options={"providers": {"openai": True}},
     )
     assert (maybe_code_interpreter_tool(model_name, tool) is not None) is expected
+
+
+@pytest.mark.parametrize("callback", [False, True])
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "search", "query": "Inspect streaming"},
+        {"type": "open_page", "url": "https://example.com"},
+        {"type": "find_in_page", "url": "https://example.com", "pattern": "streaming"},
+    ],
+)
+async def test_responses_stream_publishes_web_tools_before_completion(
+    monkeypatch: pytest.MonkeyPatch, callback: bool, action: dict[str, str]
+) -> None:
+    from openai.types.responses import (
+        Response,
+        ResponseCompletedEvent,
+        ResponseFunctionWebSearch,
+    )
+    from openai.types.responses.response_output_item_added_event import (
+        ResponseOutputItemAddedEvent,
+    )
+    from openai.types.responses.response_output_item_done_event import (
+        ResponseOutputItemDoneEvent,
+    )
+    from openai.types.responses.response_reasoning_summary_text_delta_event import (
+        ResponseReasoningSummaryTextDeltaEvent,
+    )
+
+    from inspect_ai._util.content import ContentReasoning, ContentToolUse
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model._providers.openai_responses import _generate_responses_stream
+
+    monkeypatch.setattr("inspect_ai.model._stream.PARTIAL_OUTPUT_FLUSH_INTERVAL", 0.0)
+    pending = ModelEvent(
+        model="test",
+        input=[],
+        tools=[],
+        tool_choice="auto",
+        config=GenerateConfig(),
+        output=ModelOutput.from_content("test", ""),
+        pending=True,
+    )
+    final = Response.model_validate(
+        dict(
+            id="resp_1",
+            created_at=0,
+            model="test",
+            object="response",
+            output=[],
+            parallel_tool_calls=False,
+            tool_choice="auto",
+            tools=[],
+        )
+    )
+    collector = _StreamCollector()
+    observer = ModelStreamObserver("test", collector if callback else None)
+    await observer.begin_attempt(pending)
+    # The SDK constructs partial items without validating required fields;
+    # web-search start events can omit action entirely.
+    added = ResponseOutputItemAddedEvent(
+        type="response.output_item.added",
+        output_index=1,
+        sequence_number=1,
+        item=ResponseFunctionWebSearch.model_construct(
+            type="web_search_call", id="ws_1", status="in_progress"
+        ),
+    )
+    done = ResponseOutputItemDoneEvent.model_validate(
+        dict(
+            type="response.output_item.done",
+            output_index=1,
+            sequence_number=2,
+            item=dict(
+                type="web_search_call",
+                id="ws_1",
+                status="completed",
+                action=action,
+            ),
+        )
+    )
+
+    def reasoning(text: str, index: int) -> ResponseReasoningSummaryTextDeltaEvent:
+        return ResponseReasoningSummaryTextDeltaEvent(
+            type="response.reasoning_summary_text.delta",
+            delta=text,
+            item_id=f"rs_{index}",
+            output_index=index,
+            summary_index=0,
+            sequence_number=index,
+        )
+
+    class FakeStream:
+        async def __aenter__(self) -> "FakeStream":
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            pass
+
+        def __aiter__(self) -> Any:
+            async def events() -> Any:
+                yield reasoning("Before", 0)
+                yield added
+                content = pending.output.message.content
+                assert isinstance(content, list)
+                assert [c.type for c in content] == ["reasoning", "tool_use"]
+                yield done
+                yield reasoning("After", 2)
+                content = pending.output.message.content
+                assert isinstance(content, list)
+                assert [c.type for c in content] == [
+                    "reasoning",
+                    "tool_use",
+                    "reasoning",
+                ]
+                assert isinstance(content[0], ContentReasoning)
+                assert content[0].reasoning == "Before"
+                assert isinstance(content[1], ContentToolUse)
+                assert json.loads(content[1].arguments) == action
+                assert isinstance(content[2], ContentReasoning)
+                assert content[2].reasoning == "After"
+                assert (
+                    ModelEvent.model_validate_json(pending.model_dump_json()).output
+                    == pending.output
+                )
+                yield ResponseCompletedEvent(
+                    type="response.completed", sequence_number=4, response=final
+                )
+
+            return events()
+
+    class FakeResponses:
+        async def create(self, **kwargs: Any) -> FakeStream:
+            return FakeStream()
+
+    client: Any = SimpleNamespace(responses=FakeResponses())
+    with model_stream_observer(observer):
+        result = await _generate_responses_stream(
+            client, dict(model="test", stream=True)
+        )
+    assert result is final
+    assert [e.reasoning for e in collector.events] == (
+        ["Before", "After"] if callback else []
+    )

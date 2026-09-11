@@ -14,16 +14,12 @@ streaming. Providers that don't stream never call in, and callers that don't
 pass `on_stream` still feed the progress record via bare heartbeats — both
 degrade gracefully (see design/ctl/generate-progress.md).
 
-To keep on_stream support code from ever affecting callers that didn't opt
-in (a provider may stream for its own reasons — e.g. Anthropic auto-streams
-long/reasoning requests), everything downstream of a content delta is gated
-on an `on_stream` handler being present: providers gate delta construction
-on `model_stream_requested()` (reporting a bare heartbeat instead), and
-`ModelStreamObserver.report_delta` backstops the reporting side of any
-ungated call site (construction itself can only be gated where it happens).
-Without `on_stream` only the heartbeat/token progress channel runs —
-partial-output snapshots included, since they are built from the delta
-stream.
+Public callback delta construction remains gated on `model_stream_requested()`.
+The OpenAI Responses provider also reports display content independently through
+`report_model_stream_content`, enabling pending dashboard snapshots without a
+callback. It consults `model_stream_partial_requested()` to enable streaming
+for pending transcript events. Other providers retain their callback-gated
+partial-output behavior.
 
 Providers differ deliberately in how a stream that ends without usage is
 handled, following each provider's contract and response type rather than a
@@ -55,7 +51,12 @@ import anyio
 from pydantic import BaseModel, Field
 from typing_extensions import TypeAlias
 
-from inspect_ai._util.content import Content, ContentReasoning, ContentText
+from inspect_ai._util.content import (
+    Content,
+    ContentReasoning,
+    ContentText,
+    ContentToolUse,
+)
 
 from ._chat_message import ChatMessageAssistant
 from ._model_output import ChatCompletionChoice, ModelOutput
@@ -178,7 +179,9 @@ Each flush re-serializes the pending event for transcript subscribers (the
 realtime sample buffer persists a row per update), so per-chunk notification
 is off the table (see the endpoint-cost-audit note in
 design/ctl/generate-progress.md); one flush per second keeps inspect view's
-live rendering fresh while bounding that cost for long generations.
+live rendering fresh while bounding that cost for long generations. Server
+tool item boundaries flush immediately so activity remains visible during
+tools that produce no intervening chunks.
 """
 
 
@@ -200,11 +203,9 @@ class ModelStreamObserver:
       raises is logged and detaches it for the remainder of the call — see
       `_deliver` — never failing the model call itself).
 
-    The last two are delta-driven and run only while an `on_stream` handler
-    is attached (`report_delta` degrades to a heartbeat otherwise): they are
-    on_stream support code, and a caller that never passed a callback must
-    not be exposed to it. The progress record alone runs for every streamed
-    call.
+    Callback deltas are accumulated only while a handler is attached.
+    Providers can independently publish dashboard content using
+    `report_partial_content`, without emitting new public callback events.
 
     The wrapper (not providers) owns retry semantics: `begin_attempt` resets
     per-attempt state and emits a `StreamRetryEvent` boundary to `on_stream`
@@ -243,7 +244,7 @@ class ModelStreamObserver:
         # Content items at flush time (appending fragments keeps per-chunk
         # work O(1); string += on one growing block would be quadratic over
         # a long generation)
-        self._fragments: list[tuple[str, list[str]]] = []
+        self._fragments: list[tuple[str, list[str]] | ContentToolUse] = []
         self._partial_published = False
         self._last_flush = 0.0
         # stall-detection state for the current attempt (see arm_stall_scope)
@@ -320,7 +321,9 @@ class ModelStreamObserver:
             self._tokens_current = output_tokens
         self._touch_progress()
 
-    async def report_delta(self, delta: StreamContentEvent) -> None:
+    async def report_delta(
+        self, delta: StreamContentEvent, *, publish_partial: bool = True
+    ) -> None:
         # without a live handler (never passed, or detached after raising)
         # deltas degrade to a bare heartbeat — no accumulation, no partial
         # snapshots. Backstops the reporting side of any ungated call site;
@@ -329,9 +332,11 @@ class ModelStreamObserver:
         if self._on_stream is None:
             self._touch_progress()
             return
-        self._accumulate(delta)
+        if publish_partial:
+            self._accumulate(delta)
         self._touch_progress()
-        self._maybe_flush_partial()
+        if publish_partial:
+            self._maybe_flush_partial()
         self._delivered = True
         await self._deliver(delta)
 
@@ -463,12 +468,30 @@ class ModelStreamObserver:
             # content, so they feed progress and on_stream but not the
             # snapshot
             return
-        if self._fragments and self._fragments[-1][0] == kind:
-            self._fragments[-1][1].append(fragment)
+        last = self._fragments[-1] if self._fragments else None
+        if isinstance(last, tuple) and last[0] == kind:
+            last[1].append(fragment)
         else:
             self._fragments.append((kind, [fragment]))
 
-    def _maybe_flush_partial(self) -> None:
+    def report_partial_content(
+        self, content: StreamTextEvent | StreamReasoningEvent | ContentToolUse
+    ) -> None:
+        """Update display content independently of the public callback stream."""
+        if not self._publish_partial:
+            return
+        if isinstance(content, ContentToolUse):
+            for index, block in enumerate(self._fragments):
+                if isinstance(block, ContentToolUse) and block.id == content.id:
+                    self._fragments[index] = content
+                    break
+            else:
+                self._fragments.append(content)
+        else:
+            self._accumulate(content)
+        self._maybe_flush_partial(force=isinstance(content, ContentToolUse))
+
+    def _maybe_flush_partial(self, *, force: bool = False) -> None:
         event = self._event
         if (
             not self._publish_partial
@@ -479,18 +502,24 @@ class ModelStreamObserver:
             return
         now = time.monotonic()
         if (
-            self._partial_published
+            not force
+            and self._partial_published
             and now - self._last_flush < PARTIAL_OUTPUT_FLUSH_INTERVAL
         ):
             return
         self._last_flush = now
         self._partial_published = True
-        content: list[Content] = [
-            ContentText(text="".join(fragments))
-            if kind == "text"
-            else ContentReasoning(reasoning="".join(fragments))
-            for kind, fragments in self._fragments
-        ]
+        content: list[Content] = []
+        for block in self._fragments:
+            if isinstance(block, ContentToolUse):
+                content.append(block.model_copy(deep=True))
+            else:
+                kind, fragments = block
+                content.append(
+                    ContentText(text="".join(fragments))
+                    if kind == "text"
+                    else ContentReasoning(reasoning="".join(fragments))
+                )
         event.output = ModelOutput(
             model=self._model,
             choices=[
@@ -596,7 +625,9 @@ def report_model_stream_progress(output_tokens: int | None = None) -> None:
         observer.report_progress(output_tokens)
 
 
-async def report_model_stream_delta(delta: StreamContentEvent) -> None:
+async def report_model_stream_delta(
+    delta: StreamContentEvent, *, publish_partial: bool = True
+) -> None:
     """Report a content delta (from a provider streaming loop).
 
     Call sites must gate on `model_stream_requested()` (reporting a bare
@@ -612,4 +643,24 @@ async def report_model_stream_delta(delta: StreamContentEvent) -> None:
     """
     observer = _model_stream_observer.get()
     if observer is not None:
-        await observer.report_delta(delta)
+        await observer.report_delta(delta, publish_partial=publish_partial)
+
+
+def model_stream_partial_requested() -> bool:
+    """Whether a pending transcript event can receive live output snapshots."""
+    observer = _model_stream_observer.get()
+    return (
+        observer is not None
+        and observer._publish_partial
+        and observer._event is not None
+        and observer._event.pending is True
+    )
+
+
+def report_model_stream_content(
+    content: StreamTextEvent | StreamReasoningEvent | ContentToolUse,
+) -> None:
+    """Report display content without changing the public callback contract."""
+    observer = _model_stream_observer.get()
+    if observer is not None:
+        observer.report_partial_content(content)

@@ -55,7 +55,7 @@ from .._openai_responses import (
     openai_responses_inputs,
     pad_tool_messages_for_token_counting,
 )
-from .._stream import model_stream_requested
+from .._stream import model_stream_partial_requested, model_stream_requested
 from ._openai_batch import OpenAIBatcher
 from .util import (
     check_azure_deployment_mismatch,
@@ -627,7 +627,8 @@ class OpenAIAPI(ModelAPI):
         """Whether to stream this generate call.
 
         An explicit `streaming` model arg wins; "auto" streams when the
-        caller passed `on_stream` to `Model.generate()` — except for Azure
+        caller passed `on_stream` to `Model.generate()` or a Responses call
+        has a pending dashboard event — except for Azure
         chat completions: Azure annotates every streamed choice chunk with
         `content_filter_results`, but the SDK stream accumulator keeps
         choice-level extras only from the chunk that first creates a choice
@@ -641,7 +642,9 @@ class OpenAIAPI(ModelAPI):
             return self.streaming
         if self.is_azure() and not use_responses:
             return False
-        return model_stream_requested()
+        return model_stream_requested() or (
+            use_responses and model_stream_partial_requested()
+        )
 
     def service_model_name(self) -> str:
         """Model name without any service prefix."""

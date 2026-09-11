@@ -775,3 +775,32 @@ async def test_skip_if_no_openai_model_propagates_other_errors(
         with pytest.raises(type(error)):
             await gated()
     assert [c.closed for c in clients] == [True, True]
+
+
+@pytest.mark.parametrize("publish_partial", [False, True])
+async def test_openai_responses_dashboard_requests_streaming(
+    publish_partial: bool,
+) -> None:
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model import ModelOutput
+    from inspect_ai.model._providers.openai import OpenAIAPI
+    from inspect_ai.model._stream import ModelStreamObserver, model_stream_observer
+
+    observer = ModelStreamObserver("test", None, publish_partial=publish_partial)
+    await observer.begin_attempt(
+        ModelEvent(
+            model="test",
+            input=[],
+            tools=[],
+            tool_choice="auto",
+            config=GenerateConfig(),
+            output=ModelOutput.from_content("test", ""),
+            pending=True,
+        )
+    )
+    api = OpenAIAPI("gpt-4o", api_key="test-key")
+    with model_stream_observer(observer):
+        assert api._resolve_streaming(use_responses=True) is publish_partial
+        assert api._resolve_streaming(use_responses=False) is False
+        api.streaming = False
+        assert api._resolve_streaming(use_responses=True) is False
