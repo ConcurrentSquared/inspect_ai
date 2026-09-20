@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +11,7 @@ from inspect_ai._util.constants import NO_CONTENT
 from inspect_ai._util.content import ContentReasoning, ContentText
 from inspect_ai.dataset import Sample
 from inspect_ai.model import GenerateConfig, ModelOutput, get_model
-from inspect_ai.model._chat_message import ChatMessageAssistant
+from inspect_ai.model._chat_message import ChatMessage, ChatMessageAssistant
 from inspect_ai.model._openai_responses import (
     MESSAGE_ID,
     MESSAGE_PHASE,
@@ -358,6 +359,7 @@ async def _generate_responses_with_mock(
     config: GenerateConfig = GenerateConfig(),
     background: bool | None = None,
     capture_request: dict | None = None,
+    input: list[ChatMessage] | None = None,
 ):
     """Run generate_responses() against a mocked client returning mock_response."""
     from unittest.mock import AsyncMock, MagicMock
@@ -384,7 +386,7 @@ async def _generate_responses_with_mock(
         client=client,
         http_hooks=http_hooks,
         model_name="gpt-4o",
-        input=[],
+        input=input or [],
         tools=[],
         tool_choice="auto",
         config=config,
@@ -2911,3 +2913,319 @@ def test_web_search_requests_sources() -> None:
         has_computer_tool=False,
     )
     assert "web_search_call.action.sources" in params["include"]
+
+
+@pytest.mark.parametrize("strategy_name", ["native", "auto", "edit"])
+@pytest.mark.parametrize("threshold", [258400, 0.8])
+async def test_inline_compaction_uses_strategy_threshold(
+    monkeypatch: pytest.MonkeyPatch, strategy_name: str, threshold: int | float
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from openai.types.responses import Response
+
+    from inspect_ai.model import (
+        ChatMessageUser,
+        CompactionAuto,
+        CompactionEdit,
+        CompactionNative,
+        compaction,
+    )
+
+    model = get_model("openai/gpt-5.4", api_key="test", responses_api=True)
+    monkeypatch.setattr(model, "count_tokens", AsyncMock(return_value=10))
+    monkeypatch.setattr(model, "count_tool_tokens", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        "inspect_ai.model._compaction._compaction.get_model_input_tokens",
+        lambda model: 400000,
+    )
+    strategy = {
+        "native": CompactionNative,
+        "auto": CompactionAuto,
+        "edit": CompactionEdit,
+    }[strategy_name](threshold=threshold)
+    messages: list[ChatMessage] = [ChatMessageUser(content="Continue")]
+    compact = compaction(strategy, prefix=[], model=model)
+    compacted, _ = await compact.compact_input(messages)
+    final = Response.model_validate(
+        dict(
+            id="resp_1",
+            created_at=0,
+            model="gpt-5.4",
+            object="response",
+            output=[],
+            parallel_tool_calls=False,
+            tool_choice="auto",
+            tools=[],
+        )
+    )
+    request: dict[str, Any] = {}
+    await _generate_responses_with_mock(final, input=compacted, capture_request=request)
+    if strategy_name == "edit":
+        assert "context_management" not in request
+    else:
+        assert request["context_management"] == [
+            {
+                "type": "compaction",
+                "compact_threshold": 258400 if isinstance(threshold, int) else 320000,
+            }
+        ]
+    assert messages[0].metadata is None
+    assert model.config.extra_body is None
+
+    # A different compactor sharing the model cannot change this request's budget.
+    other = compaction(CompactionNative(threshold=123456), prefix=[], model=model)
+    await other.compact_input(messages)
+    second_request: dict[str, Any] = {}
+    await _generate_responses_with_mock(
+        final, input=compacted, capture_request=second_request
+    )
+    assert second_request.get("context_management") == request.get("context_management")
+
+    # An explicit provider setting remains authoritative.
+    override = [{"type": "compaction", "compact_threshold": 150000}]
+    overridden: dict[str, Any] = {}
+    await _generate_responses_with_mock(
+        final,
+        input=compacted,
+        config=GenerateConfig(extra_body={"context_management": override}),
+        capture_request=overridden,
+    )
+    assert overridden["context_management"] == override
+
+
+@pytest.mark.parametrize("callback", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_inline_compaction_stream_and_replay(
+    monkeypatch: pytest.MonkeyPatch, callback: bool, cancel: bool
+) -> None:
+    import anyio
+    from openai.types.responses import (
+        Response,
+        ResponseCompactionCompactingEvent,
+        ResponseCompactionItem,
+        ResponseCompletedEvent,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseTextDeltaEvent,
+    )
+
+    from inspect_ai._util.content import ContentData
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model._openai_responses import (
+        openai_responses_chat_choices,
+        openai_responses_inputs,
+    )
+    from inspect_ai.model._providers.openai_responses import _generate_responses_stream
+
+    monkeypatch.setattr("inspect_ai.model._stream.PARTIAL_OUTPUT_FLUSH_INTERVAL", 0.0)
+    pending = ModelEvent(
+        model="test",
+        input=[],
+        tools=[],
+        tool_choice="auto",
+        config=GenerateConfig(),
+        output=ModelOutput.from_content("test", ""),
+        pending=True,
+    )
+    item = ResponseCompactionItem(
+        id="cmp_1", type="compaction", encrypted_content="opaque-state"
+    )
+    final = Response.model_validate(
+        dict(
+            id="resp_1",
+            created_at=0,
+            model="test",
+            object="response",
+            output=[
+                {
+                    "id": "msg_before",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {"type": "output_text", "text": "Before", "annotations": []}
+                    ],
+                },
+                item.model_dump(),
+                {
+                    "id": "msg_after",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {"type": "output_text", "text": "After", "annotations": []}
+                    ],
+                },
+            ],
+            parallel_tool_calls=False,
+            tool_choice="auto",
+            tools=[],
+        )
+    )
+    collector = _StreamCollector()
+    observer = ModelStreamObserver("test", collector if callback else None)
+    await observer.begin_attempt(pending)
+    started = anyio.Event()
+
+    class FakeStream:
+        closed = False
+
+        async def __aenter__(self) -> "FakeStream":
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            self.closed = True
+
+        def __aiter__(self) -> Any:
+            async def events() -> Any:
+                yield ResponseTextDeltaEvent(
+                    type="response.output_text.delta",
+                    delta="Before",
+                    item_id="msg_before",
+                    output_index=0,
+                    content_index=0,
+                    sequence_number=0,
+                    logprobs=[],
+                )
+                yield ResponseOutputItemAddedEvent(
+                    type="response.output_item.added",
+                    output_index=1,
+                    sequence_number=1,
+                    item=ResponseCompactionItem.model_construct(
+                        id="cmp_1", type="compaction"
+                    ),
+                )
+                yield ResponseCompactionCompactingEvent(
+                    type="response.compaction.compacting",
+                    item_id="cmp_1",
+                    output_index=1,
+                    sequence_number=2,
+                )
+                content = pending.output.message.content
+                assert isinstance(content, list)
+                assert [c.type for c in content] == ["text", "data"]
+                assert isinstance(content[1], ContentData)
+                metadata = content[1].data["compaction_metadata"]
+                assert isinstance(metadata, dict)
+                assert metadata["status"] == "in_progress"
+                if cancel:
+                    started.set()
+                    await anyio.sleep_forever()
+                yield ResponseOutputItemDoneEvent(
+                    type="response.output_item.done",
+                    output_index=1,
+                    sequence_number=2,
+                    item=item,
+                )
+                yield ResponseTextDeltaEvent(
+                    type="response.output_text.delta",
+                    delta="After",
+                    item_id="msg_after",
+                    output_index=2,
+                    content_index=0,
+                    sequence_number=3,
+                    logprobs=[],
+                )
+                content = pending.output.message.content
+                assert isinstance(content, list)
+                assert [c.type for c in content] == ["text", "data", "text"]
+                assert isinstance(content[1], ContentData)
+                metadata = content[1].data["compaction_metadata"]
+                assert isinstance(metadata, dict)
+                assert metadata["status"] == "completed"
+                yield ResponseCompletedEvent(
+                    type="response.completed", sequence_number=4, response=final
+                )
+
+            return events()
+
+    stream = FakeStream()
+
+    class FakeResponses:
+        async def create(self, **kwargs: Any) -> FakeStream:
+            return stream
+
+    client: Any = SimpleNamespace(responses=FakeResponses())
+
+    async def generate_stream() -> None:
+        try:
+            with model_stream_observer(observer):
+                result = await _generate_responses_stream(
+                    client, dict(model="test", stream=True)
+                )
+            assert result is final
+        finally:
+            if cancel:
+                observer.discard_partial_output()
+
+    if cancel:
+        async with anyio.create_task_group() as group:
+            group.start_soon(generate_stream)
+            await started.wait()
+            group.cancel_scope.cancel()
+        assert pending.output.completion == ""
+    else:
+        await generate_stream()
+        message = openai_responses_chat_choices("test", final, [])[0].message
+        restored = ChatMessageAssistant.model_validate_json(message.model_dump_json())
+        assert isinstance(restored.content, list)
+        assert [c.type for c in restored.content] == ["text", "data", "text"]
+        replay = await openai_responses_inputs([restored])
+        assert [p["type"] for p in replay] == ["message", "compaction", "message"]
+        assert replay[1] == {
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "opaque-state",
+        }
+    assert stream.closed
+
+
+def test_incomplete_compaction_cannot_be_replayed() -> None:
+    from openai.types.responses import ResponseCompactionItem
+
+    from inspect_ai.model._openai_responses import (
+        _extract_compaction_from_content_data,
+        compaction_to_content_data,
+    )
+
+    item = ResponseCompactionItem(id="cmp_1", type="compaction", encrypted_content="")
+    with pytest.raises(ValueError, match="no encrypted content"):
+        compaction_to_content_data(item)
+    with pytest.raises(ValueError, match="incomplete"):
+        _extract_compaction_from_content_data(
+            [compaction_to_content_data(item, pending=True)]
+        )
+
+
+def test_inline_compaction_eval_log_roundtrip(tmp_path: Path) -> None:
+    from openai.types.responses import ResponseCompactionItem
+
+    from inspect_ai._util.content import ContentData
+    from inspect_ai.log import read_eval_log
+    from inspect_ai.model._openai_responses import compaction_to_content_data
+
+    compaction_content = compaction_to_content_data(
+        ResponseCompactionItem(
+            id="cmp_logged", type="compaction", encrypted_content="opaque-state"
+        )
+    )
+    output = ModelOutput.from_content("mockllm/model", "Done")
+    output.message.content = [compaction_content, ContentText(text="Done")]
+    log = eval(
+        Task(dataset=[Sample(input="Continue")]),
+        model=get_model("mockllm/model", custom_outputs=[output]),
+        log_dir=str(tmp_path),
+    )[0]
+    assert log.status == "success"
+    assert log.location is not None
+    saved = read_eval_log(log.location)
+    assert saved.samples
+    content = saved.samples[0].messages[-1].content
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentData)
+    assert content[0] == compaction_content
+    model_events = [
+        event for event in saved.samples[0].events if event.event == "model"
+    ]
+    assert model_events[-1].output.message.content == content

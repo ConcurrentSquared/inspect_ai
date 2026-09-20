@@ -263,12 +263,41 @@ def _extract_compaction_from_content_data(
                 and isinstance(metadata, dict)
                 and metadata.get("type") == "openai_compact"
             ):
+                if metadata.get("status") == "in_progress" or not metadata.get(
+                    "encrypted_content"
+                ):
+                    raise ValueError(
+                        "Cannot replay an incomplete OpenAI compaction item"
+                    )
                 return ResponseCompactionItemParamParam(
                     type="compaction",
                     id=str(metadata.get("id")) if metadata.get("id") else None,
                     encrypted_content=str(metadata["encrypted_content"]),
                 )
     return None
+
+
+OPENAI_COMPACTION_THRESHOLD = "inspect_openai_compaction_threshold"
+"""Request-local threshold attached to compact_input's copied final message."""
+
+
+def compaction_to_content_data(
+    item: ResponseCompactionItem, *, pending: bool = False
+) -> ContentData:
+    """Preserve an inline compaction for display, persisted logs, and replay."""
+    encrypted_content = getattr(item, "encrypted_content", "") or ""
+    if not pending and not encrypted_content:
+        raise ValueError("Completed OpenAI compaction item has no encrypted content")
+    return ContentData(
+        data={
+            "compaction_metadata": {
+                "type": "openai_compact",
+                "id": item.id,
+                "encrypted_content": encrypted_content,
+                "status": "in_progress" if pending else "completed",
+            }
+        }
+    )
 
 
 def _extract_agent_message_from_internal(
@@ -540,6 +569,7 @@ def responses_extra_body_fields() -> list[str]:
         "safety_identifier",
         "truncation",
         "store",
+        "context_management",
     ]
 
 
@@ -1009,8 +1039,7 @@ def _process_response_output_items(
                 )
                 message_content.append(mcp_call_to_tool_use(output))
             case ResponseCompactionItem():
-                # Skip compaction items - handled separately by caller
-                pass
+                message_content.append(compaction_to_content_data(output))
             case ImageGenerationCall():
                 if output.status == "completed" and output.result is not None:
                     data_uri = f"data:image/png;base64,{output.result}"
@@ -1427,7 +1456,7 @@ def _openai_input_items_from_chat_message_assistant(
     # this could happen e.g. when a react() agent sets the output.completion in response
     # to a submit() tool call
     content_items: list[
-        ContentText | ContentReasoning | ContentToolUse | ContentImage
+        ContentText | ContentReasoning | ContentToolUse | ContentImage | ContentData
     ] = (
         [ContentText(text=message.content)]
         if isinstance(message.content, str)
@@ -1435,7 +1464,12 @@ def _openai_input_items_from_chat_message_assistant(
             c
             for c in message.content
             if isinstance(
-                c, ContentText | ContentReasoning | ContentToolUse | ContentImage
+                c,
+                ContentText | ContentReasoning | ContentToolUse | ContentImage,
+            )
+            or (
+                isinstance(c, ContentData)
+                and _extract_compaction_from_content_data([c]) is not None
             )
         ]
     )
@@ -1507,6 +1541,10 @@ def _openai_input_items_from_chat_message_assistant(
             flush_pending_context_text()
 
         match content:
+            case ContentData():
+                compaction = _extract_compaction_from_content_data([content])
+                if compaction is not None:
+                    items.append(compaction)
             case ContentImage():
                 # Replay generated images as user input_image messages
                 # (replaying as image_generation_call requires store=true)
@@ -1614,7 +1652,9 @@ def _openai_input_items_from_chat_message_assistant(
 
 def _synthetic_phase_for_assistant_message(
     message: ChatMessageAssistant,
-    content_items: list[ContentText | ContentReasoning | ContentToolUse | ContentImage],
+    content_items: list[
+        ContentText | ContentReasoning | ContentToolUse | ContentImage | ContentData
+    ],
 ) -> str:
     # OpenAI recommends preserving `phase` when replaying Responses API
     # assistant messages; see:

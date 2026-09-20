@@ -192,3 +192,31 @@ the original action for replay. OpenRouter exposes returned result strings and
 citation excerpts. The viewer renders recognized results as titles, plain-text
 URLs and excerpts; other result payloads remain readable raw text/JSON. Page
 contents absent from a provider response are never fetched or synthesized.
+
+### OpenAI inline compaction
+
+`CompactionNative` and `CompactionAuto` attach their resolved token threshold to
+the copied final message returned by `compact_input`, in the private metadata key
+`inspect_openai_compaction_threshold`. Only the OpenAI provider is opted in. This
+request-local carrier also works with custom compaction loops and avoids changing
+shared model configuration or leaking a context variable across async tasks.
+The Responses request builder consumes it before the logged request snapshot;
+an explicit `extra_body.context_management` takes precedence. Existing standalone
+compaction, forced overflow recovery, and other strategies/providers are unchanged.
+
+Inline `ResponseCompactionItem` records now become `ContentData` with the existing
+`compaction_metadata` shape, including encrypted content and a status. Added/done
+stream events upsert this content by compaction id and immediately notify the
+pending model event. The final converter preserves the item among the assistant's
+other content, and Responses input conversion replays it in that position. Partial
+items cannot be replayed. The completed item's encrypted content is opaque and is
+kept in logs, but the rendered dashboard shows only status and id.
+
+No public content/event types or callback event union change. Producers are the
+compaction handler and OpenAI Responses stream/final converters. Consumers are the
+request builder, stream observer, transcript/realtime buffer, eval log readers,
+dataframes, hooks, assistant replay, and the shared ts-mono content-data renderer
+(also used by sibling viewers). Older standalone user-message compaction metadata
+continues to replay and render. Tests cover strategy threshold resolution and
+isolation, saved-message round trips, ordered replay, live snapshots without a
+callback, and mid-stream cancellation/connection cleanup under both async backends.

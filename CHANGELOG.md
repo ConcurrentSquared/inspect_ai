@@ -1,5 +1,7 @@
 ## Unreleased
 
+- OpenAI native and automatic compaction now enable mid-response compaction at the configured threshold, with live dashboard status and replayable eval logs.
+
 - OpenRouter web searches now appear live with readable inputs and results; OpenAI searches show available source URLs as plain text.
 
 - OpenAI Responses now show reasoning and server tool calls live in the dashboard, with readable web search and page-fetch inputs.

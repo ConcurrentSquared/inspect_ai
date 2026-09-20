@@ -17,6 +17,8 @@ from openai._types import NOT_GIVEN
 from openai.types.responses import (
     Response,
     ResponseCodeInterpreterToolCall,
+    ResponseCompactionCompactingEvent,
+    ResponseCompactionItem,
     ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFailedEvent,
@@ -62,8 +64,10 @@ from .._openai import (
     openai_media_filter,
 )
 from .._openai_responses import (
+    OPENAI_COMPACTION_THRESHOLD,
     ResponsesModelInfo,
     code_interpreter_to_tool_use,
+    compaction_to_content_data,
     mcp_call_to_tool_use,
     mcp_list_tools_to_tool_use,
     model_usage_from_response_usage,
@@ -192,6 +196,13 @@ async def generate_responses(
             has_computer_tool=any(is_computer_tool_info(t) for t in tools),
         ),
     )
+    threshold = (
+        (input[-1].metadata or {}).get(OPENAI_COMPACTION_THRESHOLD) if input else None
+    )
+    if threshold is not None and "context_management" not in request:
+        request["context_management"] = [
+            {"type": "compaction", "compact_threshold": threshold}
+        ]
     if isinstance(background, bool):
         request["background"] = background
 
@@ -304,7 +315,18 @@ async def _generate_responses_stream(
     async with stream:
         async for event in stream:
             if model_stream_partial_requested():
-                if isinstance(event, ResponseTextDeltaEvent):
+                if isinstance(event, ResponseCompactionCompactingEvent):
+                    report_model_stream_content(
+                        compaction_to_content_data(
+                            ResponseCompactionItem(
+                                id=event.item_id,
+                                type="compaction",
+                                encrypted_content="",
+                            ),
+                            pending=True,
+                        )
+                    )
+                elif isinstance(event, ResponseTextDeltaEvent):
                     report_model_stream_content(StreamTextEvent(text=event.delta))
                 elif isinstance(
                     event,
@@ -344,6 +366,13 @@ async def _generate_responses_stream(
                     elif isinstance(output_item, McpListTools):
                         report_model_stream_content(
                             mcp_list_tools_to_tool_use(output_item)
+                        )
+                    elif isinstance(output_item, ResponseCompactionItem):
+                        report_model_stream_content(
+                            compaction_to_content_data(
+                                output_item,
+                                pending=isinstance(event, ResponseOutputItemAddedEvent),
+                            )
                         )
             if isinstance(
                 event,

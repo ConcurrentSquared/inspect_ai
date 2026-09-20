@@ -53,6 +53,7 @@ from typing_extensions import TypeAlias
 
 from inspect_ai._util.content import (
     Content,
+    ContentData,
     ContentReasoning,
     ContentText,
     ContentToolUse,
@@ -244,7 +245,7 @@ class ModelStreamObserver:
         # Content items at flush time (appending fragments keeps per-chunk
         # work O(1); string += on one growing block would be quadratic over
         # a long generation)
-        self._fragments: list[tuple[str, list[str]] | ContentToolUse] = []
+        self._fragments: list[tuple[str, list[str]] | ContentToolUse | ContentData] = []
         self._partial_published = False
         self._last_flush = 0.0
         # stall-detection state for the current attempt (see arm_stall_scope)
@@ -476,7 +477,7 @@ class ModelStreamObserver:
 
     def report_partial_content(
         self,
-        content: StreamTextEvent | StreamReasoningEvent | ContentToolUse,
+        content: StreamTextEvent | StreamReasoningEvent | ContentToolUse | ContentData,
         *,
         force: bool = True,
     ) -> None:
@@ -490,9 +491,29 @@ class ModelStreamObserver:
                     break
             else:
                 self._fragments.append(content)
+        elif isinstance(content, ContentData):
+            metadata = content.data.get("compaction_metadata")
+            for index, block in enumerate(self._fragments):
+                previous = (
+                    block.data.get("compaction_metadata")
+                    if isinstance(block, ContentData)
+                    else None
+                )
+                if (
+                    isinstance(metadata, dict)
+                    and isinstance(previous, dict)
+                    and metadata.get("id") is not None
+                    and previous.get("id") == metadata["id"]
+                ):
+                    self._fragments[index] = content
+                    break
+            else:
+                self._fragments.append(content)
         else:
             self._accumulate(content)
-        self._maybe_flush_partial(force=force and isinstance(content, ContentToolUse))
+        self._maybe_flush_partial(
+            force=force and isinstance(content, ContentToolUse | ContentData)
+        )
 
     def _maybe_flush_partial(self, *, force: bool = False) -> None:
         event = self._event
@@ -514,7 +535,7 @@ class ModelStreamObserver:
         self._partial_published = True
         content: list[Content] = []
         for block in self._fragments:
-            if isinstance(block, ContentToolUse):
+            if isinstance(block, ContentToolUse | ContentData):
                 content.append(block.model_copy(deep=True))
             else:
                 kind, fragments = block
@@ -661,7 +682,7 @@ def model_stream_partial_requested() -> bool:
 
 
 def report_model_stream_content(
-    content: StreamTextEvent | StreamReasoningEvent | ContentToolUse,
+    content: StreamTextEvent | StreamReasoningEvent | ContentToolUse | ContentData,
     *,
     force: bool = True,
 ) -> None:

@@ -16,6 +16,7 @@ from .._chat_message import ChatMessage, ChatMessageAssistant, ChatMessageUser
 from .._model import (
     REDACTED_REASONING_TOKENS_METADATA_KEY,
     Model,
+    ModelName,
     collapse_consecutive_messages_for_api,
     get_model,
 )
@@ -324,7 +325,28 @@ def compaction(
             messages: list[ChatMessage],
             force: bool = False,
         ) -> tuple[list[ChatMessage], ChatMessageUser | None]:
-            return await compact_fn(messages, force=force)
+            compacted, supplemental = await compact_fn(messages, force=force)
+            from .auto import CompactionAuto
+            from .native import CompactionNative
+
+            if (
+                compacted
+                and isinstance(strategy, CompactionNative | CompactionAuto)
+                and ModelName(target_model).api == "openai"
+            ):
+                from .._openai_responses import OPENAI_COMPACTION_THRESHOLD
+
+                # Keep the threshold local to this request: models are shared
+                # across samples and may have several different compactors.
+                compacted[-1] = compacted[-1].model_copy(
+                    update={
+                        "metadata": {
+                            **(compacted[-1].metadata or {}),
+                            OPENAI_COMPACTION_THRESHOLD: threshold,
+                        }
+                    }
+                )
+            return compacted, supplemental
 
         async def record_output(
             self, input: list[ChatMessage], output: ModelOutput
