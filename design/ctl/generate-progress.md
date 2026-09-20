@@ -169,3 +169,26 @@ page contents are synthesized. This changes pending ModelEvent output semantics,
 not its schema: realtime buffer/transcript subscribers and the dashboard consume
 the snapshots; final log readers, dataframes, hooks, replay, and sibling packages
 continue to receive the existing completed response format.
+
+
+### OpenRouter web tools and search results
+
+OpenRouter Chat Completions now requests streaming for pending transcript events,
+subject to the existing prompt-logprob gate and explicit `stream=False`. An
+OpenRouter-specific accumulator reconstructs indexed `reasoning_details` while
+preserving ids, formats, signed/encrypted reasoning, and server-tool replay data.
+The existing callback schema and client function-tool execution stay unchanged.
+`reasoning.server_tool_call` web-search/fetch records become ordered
+`ContentToolUse` blocks; raw records live in their internal metadata and are
+reassembled with signed reasoning on replay. The model converter is the producer;
+the transcript buffer, dashboard, persisted log readers, dataframes and sibling
+consumers continue to use existing content schemas. Saved-log round-trip and
+subsequent-request tests cover the change. URL-citation-only responses show
+"Search sources", with no invented query or call timing.
+
+OpenAI Responses requests `web_search_call.action.sources` for web-search tools
+and projects available source records into the existing result field, retaining
+the original action for replay. OpenRouter exposes returned result strings and
+citation excerpts. The viewer renders recognized results as titles, plain-text
+URLs and excerpts; other result payloads remain readable raw text/JSON. Page
+contents absent from a provider response are never fetched or synthesized.

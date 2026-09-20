@@ -2,7 +2,7 @@ import functools
 import json
 import logging
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import AsyncIterable, Collection, Mapping
 from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Literal, NamedTuple, TypeAlias, cast
@@ -16,7 +16,6 @@ from openai import (
     APIResponseValidationError,
     APIStatusError,
     APITimeoutError,
-    AsyncStream,
     ContentFilterFinishReasonError,
     LengthFinishReasonError,
     OpenAIError,
@@ -1010,7 +1009,9 @@ def model_output_from_openai(
 
 
 async def openai_chat_completion_stream_final(
-    stream: AsyncStream[ChatCompletionChunk],
+    stream: AsyncIterable[ChatCompletionChunk],
+    *,
+    publish_partial: bool = True,
 ) -> ChatCompletion:
     """Consume a raw chat-completions chunk stream and return the final completion.
 
@@ -1039,7 +1040,9 @@ async def openai_chat_completion_stream_final(
     async for chunk in stream:
         saw_chunk = True
         state.handle_chunk(chunk)
-        await _report_chat_completion_chunk(chunk, tool_calls)
+        await _report_chat_completion_chunk(
+            chunk, tool_calls, publish_partial=publish_partial
+        )
     if not saw_chunk:
         # get_final_completion() would fail on a bare assert; raise a
         # descriptive, retryable error instead (misbehaving server: 200 with
@@ -1065,7 +1068,10 @@ class _StreamToolCallInfo(NamedTuple):
 
 
 async def _report_chat_completion_chunk(
-    chunk: ChatCompletionChunk, tool_calls: dict[int, _StreamToolCallInfo]
+    chunk: ChatCompletionChunk,
+    tool_calls: dict[int, _StreamToolCallInfo],
+    *,
+    publish_partial: bool = True,
 ) -> None:
     """Report one streamed chunk to the model layer's stream observer.
 
@@ -1093,10 +1099,15 @@ async def _report_chat_completion_chunk(
             delta, "reasoning", None
         )
         if isinstance(reasoning, str) and reasoning:
-            await report_model_stream_delta(StreamReasoningEvent(reasoning=reasoning))
+            await report_model_stream_delta(
+                StreamReasoningEvent(reasoning=reasoning),
+                publish_partial=publish_partial,
+            )
             reported = True
         if delta.content:
-            await report_model_stream_delta(StreamTextEvent(text=delta.content))
+            await report_model_stream_delta(
+                StreamTextEvent(text=delta.content), publish_partial=publish_partial
+            )
             reported = True
         for tool_call in delta.tool_calls or []:
             function = tool_call.function
@@ -1114,7 +1125,8 @@ async def _report_chat_completion_chunk(
                     arguments=(function.arguments or "")
                     if function is not None
                     else "",
-                )
+                ),
+                publish_partial=publish_partial,
             )
             reported = True
     if not reported and chunk.usage is None:

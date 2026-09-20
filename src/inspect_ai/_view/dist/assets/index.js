@@ -74762,10 +74762,13 @@ var isValidView = (view) => {
 	return true;
 };
 var ServerToolCall_module_default = {
-	tool: "_tool_18myc_1",
-	execOutput: "_execOutput_18myc_5",
-	execError: "_execError_18myc_16",
-	webArgs: "_webArgs_18myc_20"
+	tool: "_tool_rwt9r_1",
+	execOutput: "_execOutput_rwt9r_5",
+	execError: "_execError_rwt9r_16",
+	webArgs: "_webArgs_rwt9r_20",
+	webResult: "_webResult_rwt9r_39",
+	webExcerpt: "_webExcerpt_rwt9r_43",
+	webUrl: "_webUrl_rwt9r_49"
 };
 //#endregion
 //#region ../../packages/inspect-components/src/chat/server-tools/ServerToolCall.tsx
@@ -74775,7 +74778,7 @@ var ServerToolCall_module_default = {
 * grammar with a globe icon and a neutral "server" pill as the only server
 * signals.
 */ var ServerToolCall = (t0) => {
-	const $ = (0, import_compiler_runtime.c)(52);
+	const $ = (0, import_compiler_runtime.c)(54);
 	const { id, content, flush: t1, className } = t0;
 	const flush = t1 === void 0 ? true : t1;
 	let T0;
@@ -74790,19 +74793,23 @@ var ServerToolCall_module_default = {
 	let t7;
 	let t8;
 	let t9;
+	let webArgs;
 	let webSearchResult;
 	if ($[0] !== className || $[1] !== content || $[2] !== flush || $[3] !== id) {
 		const args = resolveArgs(content);
-		const webArgs = content.tool_type === "web_search";
+		webArgs = content.tool_type === "web_search";
 		let t10;
-		if ($[17] === Symbol.for("react.memo_cache_sentinel")) {
+		if ($[18] === Symbol.for("react.memo_cache_sentinel")) {
 			t10 = {
 				search: "Web search",
+				web_search: "Web search",
+				web_fetch: "Fetch page",
+				search_sources: "Search sources",
 				open_page: "Open page",
 				find_in_page: "Find in page"
 			};
-			$[17] = t10;
-		} else t10 = $[17];
+			$[18] = t10;
+		} else t10 = $[18];
 		const displayName = webArgs ? t10[content.name] ?? content.name : content.name;
 		const title = content.context ? `${content.context} — ${displayName}` : displayName;
 		const summaryArgs = {};
@@ -74810,47 +74817,47 @@ var ServerToolCall_module_default = {
 		for (const [key, value] of Object.entries(args)) if (typeof value === "string" && value.includes("\n")) inputArgs.push([key, value]);
 		else summaryArgs[key] = value;
 		let t11;
-		if ($[18] !== content) {
+		if ($[19] !== content) {
 			t11 = maybeListTools(content);
-			$[18] = content;
-			$[19] = t11;
-		} else t11 = $[19];
+			$[19] = content;
+			$[20] = t11;
+		} else t11 = $[20];
 		listToolsResult = t11;
 		let t12;
-		if ($[20] !== content) {
+		if ($[21] !== content) {
 			t12 = maybeWebSearchResult(content);
-			$[20] = content;
-			$[21] = t12;
-		} else t12 = $[21];
+			$[21] = content;
+			$[22] = t12;
+		} else t12 = $[22];
 		webSearchResult = t12;
 		let t13;
-		if ($[22] !== content) {
+		if ($[23] !== content) {
 			t13 = maybeCodeExecution(content);
-			$[22] = content;
-			$[23] = t13;
-		} else t13 = $[23];
+			$[23] = content;
+			$[24] = t13;
+		} else t13 = $[24];
 		codeExecutionResult = t13;
 		const execHasOutput = !!codeExecutionResult && (!!codeExecutionResult.stdout || !!codeExecutionResult.stderr || codeExecutionResult.encrypted || (codeExecutionResult.returnCode ?? 0) !== 0);
 		let t14;
-		if ($[24] !== codeExecutionResult || $[25] !== content.error || $[26] !== content.result || $[27] !== execHasOutput || $[28] !== listToolsResult || $[29] !== webSearchResult) {
+		if ($[25] !== codeExecutionResult || $[26] !== content.error || $[27] !== content.result || $[28] !== execHasOutput || $[29] !== listToolsResult || $[30] !== webSearchResult) {
 			t14 = !!content.error || !!listToolsResult || !!webSearchResult || (codeExecutionResult ? execHasOutput : hasResultContent(content.result));
-			$[24] = codeExecutionResult;
-			$[25] = content.error;
-			$[26] = content.result;
-			$[27] = execHasOutput;
-			$[28] = listToolsResult;
-			$[29] = webSearchResult;
-			$[30] = t14;
-		} else t14 = $[30];
+			$[25] = codeExecutionResult;
+			$[26] = content.error;
+			$[27] = content.result;
+			$[28] = execHasOutput;
+			$[29] = listToolsResult;
+			$[30] = webSearchResult;
+			$[31] = t14;
+		} else t14 = $[31];
 		hasResult = t14;
 		T0 = ToolBlock;
 		t2 = id;
 		t3 = flush;
-		if ($[31] !== content.name) {
+		if ($[32] !== content.name) {
 			t4 = iconForTool(content.name, { server: true });
-			$[31] = content.name;
-			$[32] = t4;
-		} else t4 = $[32];
+			$[32] = content.name;
+			$[33] = t4;
+		} else t4 = $[33];
 		t5 = title;
 		t6 = webArgs ? void 0 : argsSummary(summaryArgs);
 		t7 = "server";
@@ -74888,7 +74895,8 @@ var ServerToolCall_module_default = {
 		$[13] = t7;
 		$[14] = t8;
 		$[15] = t9;
-		$[16] = webSearchResult;
+		$[16] = webArgs;
+		$[17] = webSearchResult;
 	} else {
 		T0 = $[4];
 		codeExecutionResult = $[5];
@@ -74902,10 +74910,11 @@ var ServerToolCall_module_default = {
 		t7 = $[13];
 		t8 = $[14];
 		t9 = $[15];
-		webSearchResult = $[16];
+		webArgs = $[16];
+		webSearchResult = $[17];
 	}
 	let t10;
-	if ($[33] !== codeExecutionResult || $[34] !== content.error || $[35] !== content.result || $[36] !== hasResult || $[37] !== id || $[38] !== listToolsResult || $[39] !== webSearchResult) {
+	if ($[34] !== codeExecutionResult || $[35] !== content.error || $[36] !== content.result || $[37] !== hasResult || $[38] !== id || $[39] !== listToolsResult || $[40] !== webArgs || $[41] !== webSearchResult) {
 		t10 = hasResult ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolBlockOutput, { children: content.error ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolCallErrorView, { error: {
 			type: "unknown",
 			message: content.error
@@ -74918,6 +74927,18 @@ var ServerToolCall_module_default = {
 		}) : codeExecutionResult ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(CodeExecutionResult, {
 			id,
 			result: codeExecutionResult
+		}) : webArgs ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ExpandablePanel, {
+			id: `${id}-output`,
+			collapse: true,
+			border: false,
+			lines: 15,
+			children: isJson(content.result) ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ToolInput, {
+				contentType: "json",
+				contents: content.result
+			}) : /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
+				className: ServerToolCall_module_default.webExcerpt,
+				children: content.result
+			})
 		}) : /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ExpandablePanel, {
 			id: `${id}-output`,
 			collapse: true,
@@ -74932,17 +74953,18 @@ var ServerToolCall_module_default = {
 				renderOptions: { renderString: "markdown" }
 			})
 		}) }) : null;
-		$[33] = codeExecutionResult;
-		$[34] = content.error;
-		$[35] = content.result;
-		$[36] = hasResult;
-		$[37] = id;
-		$[38] = listToolsResult;
-		$[39] = webSearchResult;
-		$[40] = t10;
-	} else t10 = $[40];
+		$[34] = codeExecutionResult;
+		$[35] = content.error;
+		$[36] = content.result;
+		$[37] = hasResult;
+		$[38] = id;
+		$[39] = listToolsResult;
+		$[40] = webArgs;
+		$[41] = webSearchResult;
+		$[42] = t10;
+	} else t10 = $[42];
 	let t11;
-	if ($[41] !== T0 || $[42] !== t10 || $[43] !== t2 || $[44] !== t3 || $[45] !== t4 || $[46] !== t5 || $[47] !== t6 || $[48] !== t7 || $[49] !== t8 || $[50] !== t9) {
+	if ($[43] !== T0 || $[44] !== t10 || $[45] !== t2 || $[46] !== t3 || $[47] !== t4 || $[48] !== t5 || $[49] !== t6 || $[50] !== t7 || $[51] !== t8 || $[52] !== t9) {
 		t11 = /*#__PURE__*/ (0, import_jsx_runtime.jsxs)(T0, {
 			id: t2,
 			flush: t3,
@@ -74953,18 +74975,18 @@ var ServerToolCall_module_default = {
 			className: t8,
 			children: [t9, t10]
 		});
-		$[41] = T0;
-		$[42] = t10;
-		$[43] = t2;
-		$[44] = t3;
-		$[45] = t4;
-		$[46] = t5;
-		$[47] = t6;
-		$[48] = t7;
-		$[49] = t8;
-		$[50] = t9;
-		$[51] = t11;
-	} else t11 = $[51];
+		$[43] = T0;
+		$[44] = t10;
+		$[45] = t2;
+		$[46] = t3;
+		$[47] = t4;
+		$[48] = t5;
+		$[49] = t6;
+		$[50] = t7;
+		$[51] = t8;
+		$[52] = t9;
+		$[53] = t11;
+	} else t11 = $[53];
 	return t11;
 };
 var WebSearchResults = (t0) => {
@@ -75152,8 +75174,15 @@ var hasResultContent = (result) => {
 	return true;
 };
 var maybeWebSearchResult = (content) => {
-	if (content.name !== "web_search") return;
-	const results = asJsonObjArray(content.result)?.filter(isWebResult);
+	if (content.tool_type !== "web_search") return;
+	let payload;
+	try {
+		payload = JSON.parse(content.result);
+	} catch {
+		return;
+	}
+	const entries = isRecord(payload) ? payload.results : payload;
+	const results = Array.isArray(entries) && entries.length > 0 && entries.every(isWebResult) ? entries : void 0;
 	if (results !== void 0 && results.length > 0) return { result: results };
 };
 var maybeListTools = (content) => {
@@ -75161,19 +75190,32 @@ var maybeListTools = (content) => {
 	const results = asJsonObjArray(content.result)?.filter(isToolInfo);
 	if (results !== void 0 && results.length > 0) return { result: results };
 };
-/** Shallow: the list below renders title and url, and skips entries lacking them. */ var isWebResult = (value) => isRecord(value) && typeof value["title"] === "string" && typeof value["url"] === "string";
+/** Shallow: the list below renders title and url, and skips entries lacking them. */ var isWebResult = (value) => isRecord(value) && typeof value["url"] === "string" && [
+	"title",
+	"content",
+	"snippet",
+	"text"
+].every((key) => value[key] === void 0 || typeof value[key] === "string");
 /** Shallow: the list below keys on name and renders description. */ var isToolInfo = (value) => isRecord(value) && typeof value["name"] === "string";
 function _temp$88(t0) {
 	const [key_0, value_0] = t0;
 	return /*#__PURE__*/ (0, import_jsx_runtime.jsxs)("div", { children: [/*#__PURE__*/ (0, import_jsx_runtime.jsx)("dt", { children: key_0 }), /*#__PURE__*/ (0, import_jsx_runtime.jsx)("dd", { children: typeof value_0 === "string" ? value_0 : JSON.stringify(value_0, null, 2) })] }, key_0);
 }
 function _temp2$56(result, index) {
-	return /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", { children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)("a", {
-		href: result.url,
-		target: "_blank",
-		rel: "noopener noreferrer",
-		children: result.title
-	}) }, index);
+	return /*#__PURE__*/ (0, import_jsx_runtime.jsxs)("div", {
+		className: ServerToolCall_module_default.webResult,
+		children: [
+			result.title ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", { children: result.title }) : null,
+			/*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
+				className: ServerToolCall_module_default.webUrl,
+				children: result.url
+			}),
+			result.content || result.snippet || result.text ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
+				className: ServerToolCall_module_default.webExcerpt,
+				children: result.content || result.snippet || result.text
+			}) : null
+		]
+	}, index);
 }
 var ToolOutput_module_default = {
 	toolImage: "_toolImage_1cvly_1",

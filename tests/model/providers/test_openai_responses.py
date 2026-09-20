@@ -2861,3 +2861,53 @@ async def test_responses_stream_publishes_web_tools_before_completion(
     assert [e.reasoning for e in collector.events] == (
         ["Before", "After"] if callback else []
     )
+
+
+def test_web_search_source_results() -> None:
+    from openai.types.responses import ResponseFunctionWebSearch
+
+    from inspect_ai.model._openai_responses import (
+        tool_use_to_web_search_param,
+        web_search_to_tool_use,
+    )
+
+    item = ResponseFunctionWebSearch.model_validate(
+        {
+            "type": "web_search_call",
+            "id": "ws-sources",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "query": "Inspect",
+                "sources": [{"type": "url", "url": "https://example.com/docs"}],
+            },
+        }
+    )
+    content = web_search_to_tool_use(item)
+    assert json.loads(content.result) == [
+        {"type": "url", "url": "https://example.com/docs"}
+    ]
+    assert tool_use_to_web_search_param(content)["action"] == item.action.model_dump(
+        exclude_none=True
+    )
+
+
+def test_web_search_requests_sources() -> None:
+    from openai._types import NOT_GIVEN
+
+    from inspect_ai.model._providers.openai_responses import completion_params_responses
+
+    params = completion_params_responses(
+        "gpt-5",
+        model_info=_make_mock_model_info(),
+        config=GenerateConfig(),
+        service_tier=None,
+        prompt_cache_key=NOT_GIVEN,
+        prompt_cache_retention=NOT_GIVEN,
+        safety_identifier=NOT_GIVEN,
+        responses_store=None,
+        tools=True,
+        tool_params=[{"type": "web_search"}],
+        has_computer_tool=False,
+    )
+    assert "web_search_call.action.sources" in params["include"]

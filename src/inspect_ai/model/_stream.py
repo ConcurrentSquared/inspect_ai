@@ -475,7 +475,10 @@ class ModelStreamObserver:
             self._fragments.append((kind, [fragment]))
 
     def report_partial_content(
-        self, content: StreamTextEvent | StreamReasoningEvent | ContentToolUse
+        self,
+        content: StreamTextEvent | StreamReasoningEvent | ContentToolUse,
+        *,
+        force: bool = True,
     ) -> None:
         """Update display content independently of the public callback stream."""
         if not self._publish_partial:
@@ -489,7 +492,7 @@ class ModelStreamObserver:
                 self._fragments.append(content)
         else:
             self._accumulate(content)
-        self._maybe_flush_partial(force=isinstance(content, ContentToolUse))
+        self._maybe_flush_partial(force=force and isinstance(content, ContentToolUse))
 
     def _maybe_flush_partial(self, *, force: bool = False) -> None:
         event = self._event
@@ -659,8 +662,10 @@ def model_stream_partial_requested() -> bool:
 
 def report_model_stream_content(
     content: StreamTextEvent | StreamReasoningEvent | ContentToolUse,
+    *,
+    force: bool = True,
 ) -> None:
     """Report display content without changing the public callback contract."""
     observer = _model_stream_observer.get()
     if observer is not None:
-        observer.report_partial_content(content)
+        observer.report_partial_content(content, force=force)

@@ -33,8 +33,21 @@ class ReasoningDetailText(ReasoningDetailBase):
     signature: str | None = Field(default=None)
 
 
+class ReasoningDetailServerToolCall(ReasoningDetailBase):
+    type: Literal["reasoning.server_tool_call"]
+    tool_name: str
+    arguments: str
+    result: str
+    tool_call_id: str | None = None
+
+
 ReasoningDetail = Annotated[
-    Union[ReasoningDetailSummary, ReasoningDetailEncrypted, ReasoningDetailText],
+    Union[
+        ReasoningDetailSummary,
+        ReasoningDetailEncrypted,
+        ReasoningDetailText,
+        ReasoningDetailServerToolCall,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -73,6 +86,8 @@ def openrouter_reasoning_details_to_reasoning(
         if summary is not None:
             reasoning = summary
             summary = None
+        elif any(isinstance(d, ReasoningDetailServerToolCall) for d in details):
+            reasoning = ""
         else:
             logger.warning(
                 f"Error parsing OpenRouter reasoning details: Reasoning content not provided.\n\n{details_json}"

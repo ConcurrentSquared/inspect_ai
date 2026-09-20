@@ -605,6 +605,13 @@ def completion_params_responses(
             params["text"] = {}
         params["text"]["verbosity"] = config.verbosity
 
+    if any(
+        tp.get("type")
+        in {"web_search", "web_search_preview", "web_search_preview_2025_03_11"}
+        for tp in tool_params
+    ):
+        params["include"].append("web_search_call.action.sources")
+
     if any(tp.get("type") == "code_interpreter" for tp in tool_params):
         params["include"].append("code_interpreter_call.outputs")
 

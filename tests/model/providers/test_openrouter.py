@@ -540,3 +540,229 @@ def test_openrouter_session_id_omitted_without_active_sample(
     api = _make_api("anthropic/claude-sonnet-4-5")
 
     assert api.request_headers(GenerateConfig()) == {}
+
+
+@pytest.mark.parametrize("callback", [False, True])
+async def test_web_search_stream_and_replay(
+    monkeypatch: pytest.MonkeyPatch, callback: bool
+) -> None:
+    import json
+    from collections.abc import AsyncIterator
+
+    from openai.types.chat import ChatCompletionChunk
+
+    from inspect_ai._util.content import ContentToolUse
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model import ChatMessageAssistant, StreamEvent
+    from inspect_ai.model._openrouter_stream import openrouter_stream_final
+    from inspect_ai.model._stream import ModelStreamObserver, model_stream_observer
+
+    monkeypatch.setattr("inspect_ai.model._stream.PARTIAL_OUTPUT_FLUSH_INTERVAL", 0)
+    event = ModelEvent(
+        model="test",
+        input=[],
+        tools=[],
+        tool_choice="auto",
+        config=GenerateConfig(),
+        output=ModelOutput.from_content("test", ""),
+        pending=True,
+    )
+    received: list[StreamEvent] = []
+
+    async def collect(delta: StreamEvent) -> None:
+        received.append(delta)
+
+    observer = ModelStreamObserver("test", collect if callback else None)
+    await observer.begin_attempt(event)
+    api = _make_api("anthropic/claude-sonnet-4-5")
+    originals = [
+        {
+            "type": "reasoning.text",
+            "index": 0,
+            "id": "r0",
+            "text": "Before",
+            "signature": "sig",
+        },
+        {
+            "type": "reasoning.server_tool_call",
+            "index": 1,
+            "tool_call_id": "search1",
+            "tool_name": "openrouter:web_search",
+            "arguments": '{"query":"Inspect"}',
+            "result": '[{"url":"https://example.com","title":"Docs","content":"Search excerpt"}]',
+        },
+        {
+            "type": "reasoning.text",
+            "index": 2,
+            "id": "r2",
+            "text": "After",
+            "signature": "sig2",
+        },
+    ]
+    chunks = [
+        {
+            "reasoning_details": [{**originals[0], "text": "Be", "signature": "s"}],
+            "reasoning": "Be",
+        },
+        {
+            "reasoning_details": [{**originals[0], "text": "fore", "signature": "ig"}],
+            "reasoning": "fore",
+        },
+        {"reasoning_details": [originals[1]]},
+        {"reasoning_details": [originals[2]], "reasoning": "After"},
+        {"content": "Answer"},
+    ]
+
+    async def stream() -> AsyncIterator[ChatCompletionChunk]:
+        for index, delta in enumerate(chunks):
+            yield ChatCompletionChunk.model_validate(
+                dict(
+                    id="response",
+                    created=0,
+                    model="test",
+                    object="chat.completion.chunk",
+                    choices=[dict(index=0, delta=delta, finish_reason=None)],
+                )
+            )
+            if index == 2:
+                content = event.output.message.content
+                assert isinstance(content, list)
+                assert [c.type for c in content] == ["reasoning", "tool_use"]
+                assert isinstance(content[1], ContentToolUse)
+                assert json.loads(content[1].arguments) == {"query": "Inspect"}
+                assert "Search excerpt" in content[1].result
+        yield ChatCompletionChunk.model_validate(
+            dict(
+                id="response",
+                created=0,
+                model="test",
+                object="chat.completion.chunk",
+                choices=[dict(index=0, delta={}, finish_reason="stop")],
+            )
+        )
+
+    with model_stream_observer(observer):
+        assert api.resolve_stream(GenerateConfig(reasoning_effort="high"))
+        completion = await openrouter_stream_final(stream())
+    extra = completion.choices[0].message.model_extra
+    assert extra is not None
+    assert extra["reasoning_details"] == originals
+    choices = api.chat_choices_from_completion(completion, [])
+    message = choices[0].message
+    assert isinstance(message.content, list)
+    assert [c.type for c in message.content] == [
+        "reasoning",
+        "tool_use",
+        "reasoning",
+        "text",
+    ]
+    restored = ChatMessageAssistant.model_validate_json(message.model_dump_json())
+    replay = await api.messages_to_openai([restored])
+    assert replay[0].get("reasoning_details") == originals
+    assert all(e.type != "tool_call" for e in received)
+    assert [e.text for e in received if e.type == "text"] == (
+        ["Answer"] if callback else []
+    )
+
+
+async def test_openrouter_stream_closes_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from collections.abc import AsyncIterator
+
+    import anyio
+    from openai.types.chat import ChatCompletionChunk
+
+    started = anyio.Event()
+    closed = False
+
+    class Stream:
+        async def __aenter__(self) -> "Stream":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            nonlocal closed
+            closed = True
+
+        async def __aiter__(self) -> AsyncIterator[ChatCompletionChunk]:
+            yield ChatCompletionChunk.model_validate(
+                dict(
+                    id="resp",
+                    model="test",
+                    created=0,
+                    object="chat.completion.chunk",
+                    choices=[
+                        dict(
+                            index=0,
+                            delta={"content": "Before cancellation"},
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+            started.set()
+            await anyio.sleep_forever()
+
+    api = _make_api("test", stream=True)
+
+    async def create(**kwargs: Any) -> Stream:
+        return Stream()
+
+    monkeypatch.setattr(api.client.chat.completions, "create", create)
+
+    async def generate() -> None:
+        await api._generate_completion(
+            {"model": "test", "stream": True}, GenerateConfig()
+        )
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(generate)
+        await started.wait()
+        group.cancel_scope.cancel()
+    assert closed
+
+
+def test_openrouter_citation_sources_preserve_excerpts() -> None:
+    import json
+
+    from openai.types.chat import ChatCompletion
+
+    from inspect_ai._util.content import ContentToolUse
+
+    response = ChatCompletion.model_validate(
+        dict(
+            id="resp",
+            model="test",
+            created=0,
+            object="chat.completion",
+            choices=[
+                dict(
+                    index=0,
+                    finish_reason="stop",
+                    message=dict(
+                        role="assistant",
+                        content="Answer",
+                        annotations=[
+                            dict(
+                                type="url_citation",
+                                url_citation=dict(
+                                    url="https://example.com",
+                                    title="Example",
+                                    start_index=0,
+                                    end_index=6,
+                                    content="An excerpt.",
+                                ),
+                            )
+                        ],
+                    ),
+                )
+            ],
+        )
+    )
+    message = _make_api("test").chat_choices_from_completion(response, [])[0].message
+    assert isinstance(message.content, list)
+    sources = message.content[-1]
+    assert isinstance(sources, ContentToolUse)
+    assert sources.name == "search_sources"
+    assert sources.arguments == ""
+    assert json.loads(sources.result)[0]["content"] == "An excerpt."

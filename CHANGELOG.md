@@ -1,5 +1,7 @@
 ## Unreleased
 
+- OpenRouter web searches now appear live with readable inputs and results; OpenAI searches show available source URLs as plain text.
+
 - OpenAI Responses now show reasoning and server tool calls live in the dashboard, with readable web search and page-fetch inputs.
 
 - Fixed Linux evaluations slowing down as model clients open more HTTPS connections.

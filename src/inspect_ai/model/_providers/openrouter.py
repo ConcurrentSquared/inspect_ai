@@ -9,7 +9,12 @@ from openai.types.chat import (
 from pydantic import JsonValue
 from typing_extensions import NotRequired, TypedDict, override
 
-from inspect_ai._util.content import ContentReasoning
+from inspect_ai._util.content import (
+    Content,
+    ContentReasoning,
+    ContentText,
+    ContentToolUse,
+)
 from inspect_ai._util.error import PrerequisiteError
 from inspect_ai._util.logger import warn_once
 from inspect_ai.model import _openrouter_reasoning
@@ -23,9 +28,16 @@ from inspect_ai.model._openai import (
     chat_choices_from_openai,
     openai_chat_message,
 )
+from inspect_ai.model._openrouter_stream import (
+    SERVER_TOOL_DETAIL,
+    openrouter_stream_final,
+    reasoning_details_content,
+    search_sources_content,
+)
 from inspect_ai.model._reasoning import (
     reasoning_to_think_tag,
 )
+from inspect_ai.model._stream import model_stream_partial_requested
 from inspect_ai.tool import ToolChoice
 from inspect_ai.tool._tool_info import ToolInfo
 
@@ -220,7 +232,35 @@ class OpenRouterAPI(OpenAICompatibleAPI):
             else:
                 return None
 
-        return chat_choices_from_openai(completion, tools, extract_reasoning_details)
+        choices = chat_choices_from_openai(completion, tools, extract_reasoning_details)
+        for choice in choices:
+            if not isinstance(choice.message.content, list):
+                continue
+            content: list[Content] = []
+            for block in choice.message.content:
+                if isinstance(block, ContentReasoning):
+                    replay = reasoning_to_openrouter_reasoning_details(block)
+                    details = replay.get("reasoning_details") if replay else None
+                    if isinstance(details, list) and any(
+                        d.get("type") == "reasoning.server_tool_call" for d in details
+                    ):
+                        content.extend(reasoning_details_content(details))
+                        continue
+                content.append(block)
+            choice.message.content = content
+        for choice, raw in zip(choices, completion.choices):
+            sources = search_sources_content(
+                raw.message.annotations, f"{completion.id}-sources-{raw.index}"
+            )
+            if sources is not None:
+                existing = choice.message.content
+                source_content: list[Content] = (
+                    [ContentText(text=existing)]
+                    if isinstance(existing, str)
+                    else existing
+                )
+                choice.message.content = [*source_content, sources]
+        return choices
 
     @override
     async def messages_to_openai(
@@ -268,10 +308,39 @@ class OpenRouterAPI(OpenAICompatibleAPI):
             else:
                 return reasoning_to_think_tag(content)
 
-        return [
-            await openai_chat_message(message, "system", handle_reasoning_details)
-            for message in input
-        ]
+        messages: list[ChatCompletionMessageParam] = []
+        for message in input:
+            converted = await openai_chat_message(
+                message, "system", handle_reasoning_details
+            )
+            if (
+                message.role == "assistant"
+                and isinstance(message.content, list)
+                and any(
+                    isinstance(c, ContentToolUse)
+                    and isinstance(c.internal, dict)
+                    and SERVER_TOOL_DETAIL in c.internal
+                    for c in message.content
+                )
+            ):
+                details: list[Any] = []
+                for content in message.content:
+                    if (
+                        isinstance(content, ContentReasoning)
+                        and not _strip_reasoning_details
+                    ):
+                        replay = reasoning_to_openrouter_reasoning_details(content)
+                        if replay is not None:
+                            details.extend(replay["reasoning_details"])
+                    elif (
+                        isinstance(content, ContentToolUse)
+                        and isinstance(content.internal, dict)
+                        and SERVER_TOOL_DETAIL in content.internal
+                    ):
+                        details.append(content.internal[SERVER_TOOL_DETAIL])
+                cast(dict[str, Any], converted)["reasoning_details"] = details
+            messages.append(converted)
+        return messages
 
     @override
     def on_response(self, response: dict[str, Any]) -> None:
@@ -326,6 +395,9 @@ class OpenRouterAPI(OpenAICompatibleAPI):
         # Anthropic-compatible backends (Anthropic-direct, Bedrock, Vertex).
         if self._cache_prompt_enabled(config):
             _add_anthropic_cache_markers(request)
+        if self.resolve_stream(config):
+            async with await self.client.chat.completions.create(**request) as stream:
+                return await openrouter_stream_final(stream)
         return await super()._generate_completion(request, config)
 
     def _cache_prompt_enabled(self, config: GenerateConfig) -> bool:
@@ -350,25 +422,8 @@ class OpenRouterAPI(OpenAICompatibleAPI):
         return True
 
     @override
-    def auto_streamable(self, config: GenerateConfig) -> bool:
-        # OpenRouter returns reasoning as a message-level `reasoning_details`
-        # list (including Anthropic signed reasoning blocks that must round-trip
-        # intact for multi-turn replay). Whether the SDK stream accumulator
-        # reassembles streamed reasoning_details losslessly depends on
-        # OpenRouter's exact chunk shapes (unverified against the live API), so
-        # a display-only on_stream request declines to stream when the request
-        # asks for reasoning — an explicit stream=true still streams.
-        if self.reasoning_enabled is False:
-            # reasoning explicitly disabled (wins over effort/tokens)
-            return super().auto_streamable(config)
-        reasoning_requested = (
-            config.reasoning_effort is not None
-            or config.reasoning_tokens is not None
-            or self.reasoning_enabled is True
-            # the :thinking model variant enables reasoning without any config
-            or ":thinking" in self.model_name
-        )
-        return super().auto_streamable(config) and not reasoning_requested
+    def should_stream(self, config: GenerateConfig) -> bool:
+        return model_stream_partial_requested() and self.auto_streamable(config)
 
     @override
     def request_headers(self, config: GenerateConfig) -> dict[str, str]:

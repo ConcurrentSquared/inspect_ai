@@ -1227,7 +1227,14 @@ def web_search_to_tool_use(output: ResponseFunctionWebSearch) -> ContentToolUse:
         id=output.id,
         name=action_name,
         arguments=action_arguments,
-        result="",
+        result=to_json_str_safe(
+            [
+                source.model_dump(exclude_none=True)
+                for source in getattr(output.action, "sources", None) or []
+            ]
+        )
+        if getattr(output.action, "sources", None)
+        else "",
         error="failed" if output.status == "failed" else None,
     )
 

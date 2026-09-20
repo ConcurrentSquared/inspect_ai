@@ -997,14 +997,8 @@ def test_perplexity_resolve_stream_declines_auto() -> None:
         assert perplexity_api(stream=True).resolve_stream(config) is True
 
 
-def test_openrouter_resolve_stream_declines_reasoning() -> None:
-    """OpenRouter auto mode declines to stream reasoning-bearing requests.
-
-    Whether the SDK stream accumulator reassembles OpenRouter's streamed
-    reasoning_details losslessly is unverified against the live API, so a
-    display-only on_stream request declines to stream when the request asks
-    for reasoning (an explicit opt-in still streams).
-    """
+def test_openrouter_resolve_stream_preserves_reasoning() -> None:
+    """OpenRouter's dedicated accumulator supports reasoning-bearing streams."""
     from inspect_ai.model._providers.openrouter import OpenRouterAPI
 
     def openrouter_api(
@@ -1020,21 +1014,20 @@ def test_openrouter_resolve_stream_declines_reasoning() -> None:
     with model_stream_observer(ModelStreamObserver("test", collector)):
         # no reasoning in play: auto-streams
         assert openrouter_api().resolve_stream(GenerateConfig()) is True
-        # reasoning requested via config or model arg: declines (explicit
-        # opt-in still streams)
+        # Signed reasoning is retained by the OpenRouter accumulator.
         effort = GenerateConfig(reasoning_effort="medium")
-        assert openrouter_api().resolve_stream(effort) is False
+        assert openrouter_api().resolve_stream(effort) is True
         assert openrouter_api(stream=True).resolve_stream(effort) is True
         tokens = GenerateConfig(reasoning_tokens=1024)
-        assert openrouter_api().resolve_stream(tokens) is False
+        assert openrouter_api().resolve_stream(tokens) is True
         assert (
             openrouter_api(reasoning_enabled=True).resolve_stream(GenerateConfig())
-            is False
+            is True
         )
         # the :thinking model variant enables reasoning without any config
         thinking = openrouter_api(
             model="openrouter/anthropic/claude-3.7-sonnet:thinking"
         )
-        assert thinking.resolve_stream(GenerateConfig()) is False
+        assert thinking.resolve_stream(GenerateConfig()) is True
         # reasoning explicitly disabled wins over effort/tokens
         assert openrouter_api(reasoning_enabled=False).resolve_stream(effort) is True
