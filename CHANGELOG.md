@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Fixed OpenRouter reasoning and native web-search streams failing when different records reuse an index.
+
 - Direct Anthropic requests now stream search inputs, results, and compaction progress into the dashboard, using the configured compaction threshold.
 
 - Fixed OpenRouter web-search streams failing on source citations without delta indices, preserving returned URLs, titles, and excerpts.

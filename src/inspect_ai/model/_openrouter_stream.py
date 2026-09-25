@@ -85,6 +85,34 @@ def search_sources_content(annotations: Any, id: str) -> ContentToolUse | None:
     )
 
 
+def _reasoning_record_key(
+    records: dict[str, dict[str, Any]], raw: dict[str, Any]
+) -> str:
+    """Match stable ids first, then the most recent record at a reused index.
+
+    An index can be reused for different types or calls. Conflicting metadata
+    starts a new record, preserving arrival order and the original replay data.
+    Missing metadata can be filled in by later fragments.
+    """
+    metadata = ("id", "type", "format", "tool_call_id", "tool_name")
+    for identifier in ("id", "tool_call_id", "index"):
+        if raw.get(identifier) is None:
+            continue
+        for key, record in reversed(records.items()):
+            if record.get(identifier) != raw[identifier]:
+                continue
+            if all(
+                raw.get(field) is None
+                or record.get(field) is None
+                or raw[field] == record[field]
+                for field in metadata
+            ):
+                return key
+            # Reusing an index must not join a new phase to an older record.
+            break
+    return f"item:{len(records)}"
+
+
 async def openrouter_stream_final(
     stream: AsyncIterable[ChatCompletionChunk],
 ) -> ChatCompletion:
@@ -125,13 +153,7 @@ async def openrouter_stream_final(
                             raise ValueError(
                                 "OpenRouter reasoning_details entries must be objects"
                             )
-                        key = (
-                            f"index:{raw['index']}"
-                            if raw.get("index") is not None
-                            else f"id:{raw['id']}"
-                            if raw.get("id") is not None
-                            else f"item:{len(records)}"
-                        )
+                        key = _reasoning_record_key(records, raw)
                         new_record = key not in records
                         record = records.setdefault(key, {})
                         had_result = bool(record.get("result"))
@@ -146,21 +168,6 @@ async def openrouter_stream_final(
                             } and isinstance(value, str):
                                 record[field] = record.get(field, "") + value
                             elif value is not None:
-                                if (
-                                    field
-                                    in {
-                                        "id",
-                                        "type",
-                                        "format",
-                                        "tool_call_id",
-                                        "tool_name",
-                                    }
-                                    and field in record
-                                    and record[field] != value
-                                ):
-                                    raise ValueError(
-                                        f"OpenRouter changed {field} for reasoning record {key}"
-                                    )
                                 record[field] = value
                         if display:
                             tool = server_tool_content(record, f"openrouter-web-{key}")

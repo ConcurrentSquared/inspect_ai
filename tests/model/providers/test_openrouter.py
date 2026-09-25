@@ -112,6 +112,88 @@ async def test_stream_citations_without_delta_indices() -> None:
     ]
 
 
+@pytest.mark.parametrize("field", ["type", "id", "format", "tool_call_id", "tool_name"])
+async def test_stream_reused_index_preserves_metadata(field: str) -> None:
+    from collections.abc import AsyncIterator
+
+    from openai.types.chat import ChatCompletionChunk
+
+    from inspect_ai.model._openrouter_stream import openrouter_stream_final
+
+    first = {"index": 0, field: "first", "text": "A"}
+    second = {"index": 0, field: "second", "text": "B"}
+
+    async def stream() -> AsyncIterator[ChatCompletionChunk]:
+        for detail in [first, second, {"index": 0, "text": "C"}]:
+            yield ChatCompletionChunk.model_validate(
+                dict(
+                    id="response",
+                    created=0,
+                    model="test",
+                    object="chat.completion.chunk",
+                    choices=[
+                        dict(
+                            index=0,
+                            delta={"reasoning_details": [detail]},
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+
+    completion = await openrouter_stream_final(stream())
+    extra = completion.choices[0].message.model_extra
+    assert extra is not None
+    assert extra["reasoning_details"] == [first, {**second, "text": "BC"}]
+
+
+@pytest.mark.parametrize("identifier", ["id", "tool_call_id"])
+async def test_stream_reasoning_stable_identifiers(identifier: str) -> None:
+    from collections.abc import AsyncIterator
+
+    from openai.types.chat import ChatCompletionChunk
+
+    from inspect_ai.model._openrouter_stream import openrouter_stream_final
+
+    fragments = [
+        {"index": 0, "type": "reasoning.text", "text": "A"},
+        {"index": 0, identifier: "first", "text": "B"},
+        {"index": 0, identifier: "second", "text": "C"},
+        {identifier: "first", "text": "D"},
+        {identifier: "second", "text": "E"},
+        {"text": "unindexed"},
+        {"text": "separate"},
+    ]
+
+    async def stream() -> AsyncIterator[ChatCompletionChunk]:
+        for detail in fragments:
+            yield ChatCompletionChunk.model_validate(
+                dict(
+                    id="response",
+                    created=0,
+                    model="test",
+                    object="chat.completion.chunk",
+                    choices=[
+                        dict(
+                            index=0,
+                            delta={"reasoning_details": [detail]},
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+
+    completion = await openrouter_stream_final(stream())
+    extra = completion.choices[0].message.model_extra
+    assert extra is not None
+    assert extra["reasoning_details"] == [
+        {"index": 0, "type": "reasoning.text", identifier: "first", "text": "ABD"},
+        {"index": 0, identifier: "second", "text": "CE"},
+        {"text": "unindexed"},
+        {"text": "separate"},
+    ]
+
+
 def _has_cache_control(block: Any) -> bool:
     return isinstance(block, dict) and block.get("cache_control") == EPHEMERAL
 
@@ -638,9 +720,10 @@ def test_openrouter_session_id_omitted_without_active_sample(
     assert api.request_headers(GenerateConfig()) == {}
 
 
+@pytest.mark.parametrize("reused_index", [False, True])
 @pytest.mark.parametrize("callback", [False, True])
 async def test_web_search_stream_and_replay(
-    monkeypatch: pytest.MonkeyPatch, callback: bool
+    monkeypatch: pytest.MonkeyPatch, callback: bool, reused_index: bool
 ) -> None:
     import json
     from collections.abc import AsyncIterator
@@ -695,6 +778,9 @@ async def test_web_search_stream_and_replay(
             "signature": "sig2",
         },
     ]
+    if reused_index:
+        for detail in originals:
+            detail["index"] = 0
     chunks = [
         {
             "reasoning_details": [{**originals[0], "text": "Be", "signature": "s"}],
