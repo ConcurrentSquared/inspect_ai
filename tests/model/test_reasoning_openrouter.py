@@ -1,6 +1,8 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
 from inspect_ai._util.content import ContentReasoning
 from inspect_ai.model._providers.openrouter import (
     OPENROUTER_REASONING_DETAILS_SIGNATURE,
@@ -33,6 +35,56 @@ class TestOpenrouterReasoningDetailsToReasoning:
         assert result.redacted is False
         assert result.signature is not None
         assert result.signature.startswith(OPENROUTER_REASONING_DETAILS_SIGNATURE)
+
+    @pytest.mark.parametrize("text", [None, ""])
+    def test_signature_only_text(self, text: str | None) -> None:
+        detail: dict[str, str | int] = {
+            "type": "reasoning.text",
+            "signature": "AY89a1/uM+nbmWLONDcF3OoSpwR52hA==",
+            "format": "google-gemini-v1",
+            "index": 0,
+        }
+        if text is not None:
+            detail["text"] = text
+        details = [detail]
+        with patch("inspect_ai.model._openrouter_reasoning.logger") as logger:
+            result = openrouter_reasoning_details_to_reasoning(details)
+        logger.warning.assert_not_called()
+        assert result.reasoning == ""
+        assert result.redacted is False
+        restored = ContentReasoning.model_validate_json(result.model_dump_json())
+        assert reasoning_to_openrouter_reasoning_details(restored) == {
+            "reasoning_details": details
+        }
+
+    @pytest.mark.parametrize(
+        "kind, field",
+        [
+            ("reasoning.text", "text"),
+            ("reasoning.summary", "summary"),
+            ("reasoning.encrypted", "data"),
+        ],
+    )
+    def test_signature_only_preserves_content(self, kind: str, field: str) -> None:
+        details = [
+            {"type": kind, field: "existing content"},
+            {"type": "reasoning.text", "signature": "signature"},
+        ]
+        with patch("inspect_ai.model._openrouter_reasoning.logger") as logger:
+            result = openrouter_reasoning_details_to_reasoning(details)
+        logger.warning.assert_not_called()
+        assert result.reasoning == "existing content"
+        assert result.redacted == (kind == "reasoning.encrypted")
+        assert reasoning_to_openrouter_reasoning_details(result) == {
+            "reasoning_details": details
+        }
+
+    def test_text_without_text_or_signature_logs_warning(self) -> None:
+        details = [{"type": "reasoning.text", "index": 0}]
+        with patch("inspect_ai.model._openrouter_reasoning.logger") as logger:
+            result = openrouter_reasoning_details_to_reasoning(details)
+        logger.warning.assert_called_once()
+        assert result.reasoning == json.dumps(details)
 
     def test_summary_type_only(self):
         """reasoning.summary alone becomes the reasoning (fallback behavior)."""

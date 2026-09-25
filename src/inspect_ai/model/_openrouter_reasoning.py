@@ -2,7 +2,8 @@ import json
 from logging import getLogger
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
+from typing_extensions import Self
 
 from inspect_ai._util.content import ContentReasoning
 
@@ -29,8 +30,15 @@ class ReasoningDetailEncrypted(ReasoningDetailBase):
 
 class ReasoningDetailText(ReasoningDetailBase):
     type: Literal["reasoning.text"]
-    text: str
+    text: str | None = Field(default=None)
     signature: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def validate_content(self) -> Self:
+        """Allow signature-only records, but reject records with no content."""
+        if self.text is None and not self.signature:
+            raise ValueError("Reasoning text requires text or a signature")
+        return self
 
 
 class ReasoningDetailServerToolCall(ReasoningDetailBase):
@@ -75,7 +83,8 @@ def openrouter_reasoning_details_to_reasoning(
             case "reasoning.summary":
                 summary = detail.summary
             case "reasoning.text":
-                reasoning = detail.text
+                if detail.text is not None:
+                    reasoning = detail.text
             case "reasoning.encrypted":
                 if reasoning is not None:
                     summary = reasoning
@@ -86,7 +95,11 @@ def openrouter_reasoning_details_to_reasoning(
         if summary is not None:
             reasoning = summary
             summary = None
-        elif any(isinstance(d, ReasoningDetailServerToolCall) for d in details):
+        elif any(
+            isinstance(d, ReasoningDetailServerToolCall)
+            or (isinstance(d, ReasoningDetailText) and d.signature)
+            for d in details
+        ):
             reasoning = ""
         else:
             logger.warning(
