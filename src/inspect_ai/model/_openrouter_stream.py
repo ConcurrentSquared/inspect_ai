@@ -124,12 +124,21 @@ async def openrouter_stream_final(
     """
     details: dict[int, dict[str, dict[str, Any]]] = {}
     annotations: dict[int, list[Annotation]] = {}
+    tool_indices: dict[int, dict[int, int]] = {}
 
     async def chunks() -> AsyncIterator[ChatCompletionChunk]:
         async for chunk in stream:
             chunk = chunk.model_copy(deep=True)
             for choice in chunk.choices:
                 delta = choice.delta
+                # Router tool indices can be sparse or arrive out of order;
+                # the SDK uses them as positions in a densely packed list.
+                if delta.tool_calls:
+                    indices = tool_indices.setdefault(choice.index, {})
+                    for tool_call in delta.tool_calls:
+                        tool_call.index = indices.setdefault(
+                            tool_call.index, len(indices)
+                        )
                 raw_details = (delta.model_extra or {}).pop("reasoning_details", None)
                 # OpenRouter sends complete citations without delta indices.
                 # The OpenAI accumulator interprets object lists as indexed

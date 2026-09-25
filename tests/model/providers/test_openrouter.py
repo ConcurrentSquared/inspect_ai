@@ -194,6 +194,76 @@ async def test_stream_reasoning_stable_identifiers(identifier: str) -> None:
     ]
 
 
+@pytest.mark.parametrize("indices", [(0, 1), (1, 3), (7, 2)])
+@pytest.mark.parametrize("initial_empty", [False, True])
+async def test_stream_sparse_tool_call_indices(
+    indices: tuple[int, int], initial_empty: bool
+) -> None:
+    from collections.abc import AsyncIterator
+
+    from openai.types.chat import ChatCompletionChunk
+
+    from inspect_ai.model._openrouter_stream import openrouter_stream_final
+
+    chunks: list[ChatCompletionChunk] = []
+    for step in range(-1 if initial_empty else 0, 3):
+        choices = []
+        for choice_index in range(2):
+            # Each choice sees the same provider indices in a different order.
+            ordered = indices if choice_index == 0 else indices[::-1]
+            calls = []
+            if step in (0, 1):
+                for position, index in enumerate(ordered):
+                    call: dict[str, Any] = {
+                        "index": index,
+                        "function": {
+                            "arguments": '{"value":' if step == 0 else f"{position}}}"
+                        },
+                    }
+                    if step == 0:
+                        call.update(
+                            id=f"call-{choice_index}-{position}",
+                            type="function",
+                        )
+                        call["function"]["name"] = "lookup"
+                    calls.append(call)
+            choices.append(
+                dict(
+                    index=choice_index,
+                    delta={"tool_calls": calls} if calls else {"role": "assistant"},
+                    finish_reason="tool_calls" if step == 2 else None,
+                )
+            )
+        chunks.append(
+            ChatCompletionChunk.model_validate(
+                dict(
+                    id="response",
+                    created=0,
+                    model="test",
+                    object="chat.completion.chunk",
+                    choices=choices,
+                )
+            )
+        )
+    original = [chunk.model_dump() for chunk in chunks]
+
+    async def stream() -> AsyncIterator[ChatCompletionChunk]:
+        for chunk in chunks:
+            yield chunk
+
+    completion = await openrouter_stream_final(stream())
+    assert [chunk.model_dump() for chunk in chunks] == original
+    for choice in completion.choices:
+        completed_calls = choice.message.tool_calls
+        assert completed_calls is not None
+        assert len(completed_calls) == 2
+        for position, completed_call in enumerate(completed_calls):
+            assert completed_call.type == "function"
+            assert completed_call.id == f"call-{choice.index}-{position}"
+            assert completed_call.function.name == "lookup"
+            assert completed_call.function.arguments == f'{{"value":{position}}}'
+
+
 def _has_cache_control(block: Any) -> bool:
     return isinstance(block, dict) and block.get("cache_control") == EPHEMERAL
 

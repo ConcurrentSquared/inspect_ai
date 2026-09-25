@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Fixed OpenRouter streams crashing when tool-call indices are sparse or arrive out of order.
+
 - Fixed OpenRouter signature-only reasoning records producing parsing warnings and displaying raw metadata instead of empty reasoning.
 
 - Fixed OpenRouter reasoning and native web-search streams failing when different records reuse an index.
