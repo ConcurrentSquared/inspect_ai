@@ -825,6 +825,62 @@ class FakeCancellation(BaseException):
 
 
 @pytest.mark.parametrize("callback", [True, False])
+async def test_cancelled_generate_preserves_received_content(
+    monkeypatch: pytest.MonkeyPatch, callback: bool
+) -> None:
+    from inspect_ai._util.content import ContentToolUse
+
+    monkeypatch.setattr("inspect_ai.model._stream.PARTIAL_OUTPUT_FLUSH_INTERVAL", 3600)
+    started = anyio.Event()
+    closed = anyio.Event()
+
+    async def attempt(api: ScriptedStreamAPI) -> ModelOutput:
+        try:
+            report_model_stream_content(
+                ContentToolUse(
+                    tool_type="web_search",
+                    id="search1",
+                    name="web_search",
+                    arguments='{"query":"test"}',
+                    result="",
+                )
+            )
+            # This fragment is still throttled when cancellation arrives.
+            if callback:
+                await report_model_stream_delta(StreamTextEvent(text="Received text"))
+            else:
+                report_model_stream_content(StreamTextEvent(text="Received text"))
+            started.set()
+            await anyio.sleep_forever()
+            raise AssertionError("Stream should have been cancelled")
+        finally:
+            closed.set()
+
+    async def run() -> None:
+        await _scripted_generate([attempt], on_stream=Collector() if callback else None)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(run)
+        await started.wait()
+        group.cancel_scope.cancel()
+
+    assert closed.is_set()
+    event = ScriptedStreamAPI.events[0]
+    assert not event.pending
+    assert event.error and "model call cancelled" in event.error
+    assert event.output.completion == "Received text"
+    assert event.output.metadata == {"partial": True, "interruption": "cancelled"}
+    assert event.output.stop_reason == "unknown"
+    content = event.output.message.content
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentToolUse)
+    assert content[0].arguments == '{"query":"test"}'
+    assert (
+        ModelEvent.model_validate_json(event.model_dump_json()).output == event.output
+    )
+
+
+@pytest.mark.parametrize("callback", [True, False])
 async def test_partial_output_discard_on_cancellation_notifies_transcript(
     monkeypatch: pytest.MonkeyPatch,
     callback: bool,

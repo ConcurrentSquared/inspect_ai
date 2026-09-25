@@ -1581,18 +1581,21 @@ class Model:
                     # on a live transcript (an interim-scoring deadline
                     # cancelling a grader call mid-flight would otherwise pin
                     # phantom model activity on the held sample and serialize
-                    # a pending event into the log). A published partial
-                    # streamed snapshot belongs to the cancelled attempt and
-                    # must not survive into the log as if it were a response —
-                    # discard it before completing. An intervention producer
+                    # a pending event into the log). Preserve received chunks
+                    # as explicitly partial diagnostic output. An intervention producer
                     # (ACP operator-cancel) may already have completed the
                     # event with its own marker — leave that alone.
-                    stream_observer.discard_partial_output()
                     if isinstance(event, ModelEvent) and event.pending:
+                        stream_observer.preserve_cancelled_output()
+                        complete(RuntimeError("model call cancelled"), None)
+                    raise
+                except KeyboardInterrupt:
+                    if isinstance(event, ModelEvent) and event.pending:
+                        stream_observer.preserve_cancelled_output()
                         complete(RuntimeError("model call cancelled"), None)
                     raise
                 except BaseException:
-                    # other BaseExceptions (KeyboardInterrupt, shutdown): the
+                    # other BaseExceptions (e.g. process exit): the
                     # event's finalization stays with the interrupt machinery,
                     # but a published partial snapshot must not survive into
                     # the log as if it were a response

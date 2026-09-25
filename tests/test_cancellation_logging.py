@@ -21,6 +21,71 @@ from inspect_ai.scorer import includes
 from inspect_ai.solver import Generate, TaskState, generate, solver, user_message
 
 
+def test_sigint_preserves_streamed_model_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai._util.content import ContentToolUse
+    from inspect_ai.model import ChatMessage, GenerateConfig, ModelOutput, get_model
+    from inspect_ai.model._stream import StreamTextEvent, report_model_stream_content
+    from inspect_ai.tool import ToolChoice, ToolInfo
+
+    ready = threading.Event()
+    model = get_model("mockllm/model")
+
+    async def stream_until_cancelled(
+        input: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice,
+        config: GenerateConfig,
+    ) -> ModelOutput:
+        report_model_stream_content(
+            ContentToolUse(
+                tool_type="web_search",
+                id="search1",
+                name="web_search",
+                arguments='{"query":"test"}',
+                result="",
+            )
+        )
+        report_model_stream_content(StreamTextEvent(text="Partial answer"))
+        ready.set()
+        await anyio.sleep_forever()
+        raise AssertionError("Stream should have been cancelled")
+
+    monkeypatch.setattr(model.api, "generate", stream_until_cancelled)
+
+    def interrupt() -> None:
+        if ready.wait(timeout=15):
+            os.kill(os.getpid(), signal.SIGINT)
+
+    thread = threading.Thread(target=interrupt, daemon=True)
+    thread.start()
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            eval(
+                Task(dataset=[Sample(input="Search")]),
+                model=model,
+                log_dir=str(tmp_path),
+            )
+    finally:
+        thread.join(timeout=20)
+    assert ready.is_set()
+    logs = list_eval_logs(str(tmp_path))
+    assert len(logs) == 1
+    log = read_eval_log(logs[0].name)
+    assert log.status == "cancelled"
+    assert log.samples
+    events = [event for event in log.samples[0].events if event.event == "model"]
+    assert events[-1].error and "model call cancelled" in events[-1].error
+    assert not events[-1].pending
+    assert events[-1].output.completion == "Partial answer"
+    assert events[-1].output.metadata == {"partial": True, "interruption": "cancelled"}
+    content = events[-1].output.message.content
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentToolUse)
+    assert content[0].id == "search1"
+
+
 @pytest.fixture(params=[True, False], ids=["with_sandbox", "no_sandbox"])
 def sandbox_kwarg(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch

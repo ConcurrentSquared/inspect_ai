@@ -193,6 +193,23 @@ citation excerpts. The viewer renders recognized results as titles, plain-text
 URLs and excerpts; other result payloads remain readable raw text/JSON. Page
 contents absent from a provider response are never fetched or synthesized.
 
+### Cancellation retains diagnostic output
+
+On cancellation or KeyboardInterrupt, the model wrapper now flushes any buffered
+display fragments and completes the ModelEvent with its cancellation error.
+The retained output has `metadata.partial=true`, `metadata.interruption=cancelled`,
+and an unknown stop reason. It is never returned as a successful ModelOutput,
+cached, or appended to agent conversation history. Retries and provider failures
+still discard their partial snapshots. Event-sink exclusions still apply.
+
+This changes the meaning of output on cancelled ModelEvents, not the public
+schema: transcript/realtime-buffer readers and Inspect View can display received
+content next to the cancellation marker; persisted log readers, dataframes,
+hooks, and sibling viewers must continue to check event.error before treating an
+output as completed. Normal replay continues to consume completed assistant
+messages, not cancelled event snapshots. Tests cover both async backends and a
+single real SIGINT followed by reading the saved `.eval` file.
+
 ### OpenAI inline compaction
 
 `CompactionNative` and `CompactionAuto` attach their resolved token threshold to

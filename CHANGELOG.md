@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Cancelling an eval now preserves received model text, reasoning, and server-tool records in the log as incomplete output.
+
 - OpenAI native and automatic compaction now enable mid-response compaction at the configured threshold, with live dashboard status and replayable eval logs.
 
 - OpenRouter web searches now appear live with readable inputs and results; OpenAI searches show available source URLs as plain text.

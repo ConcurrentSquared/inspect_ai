@@ -373,6 +373,23 @@ class ModelStreamObserver:
                 exc_info=True,
             )
 
+    def preserve_cancelled_output(self) -> None:
+        """Flush received content for diagnostics, without claiming a final response.
+
+        The wrapper completes the event with a cancellation error immediately
+        afterward. This snapshot is never returned to the agent or cached.
+        """
+        event = self._event
+        if event is None or event.pending is not True:
+            return
+        self._maybe_flush_partial(force=True)
+        if self._partial_published:
+            event.output.metadata = {
+                **(event.output.metadata or {}),
+                "partial": True,
+                "interruption": "cancelled",
+            }
+
     def discard_partial_output(self) -> None:
         """Reset a published partial snapshot the attempt no longer stands by.
 
@@ -385,10 +402,10 @@ class ModelStreamObserver:
 
         Notifies the transcript so live views (realtime buffer) drop the
         snapshot too. On the error paths this is redundant (`complete()`
-        notifies right after), but on cancellation nothing else notifies —
+        notifies right after), but some BaseExceptions bypass completion —
         the event stays pending, so the buffer's last-written row would
         otherwise keep the failed attempt's partial output until the sample
-        finalizes. Safe under cancellation: `_event_updated` is sync.
+        finalizes. `_event_updated` is sync and safe during teardown.
         `_partial_published` implies no ModelEventSink is installed, so the
         notification cannot leak a sink-withheld event into the transcript.
         """
