@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Fixed OpenRouter web-search streams failing on source citations without delta indices, preserving returned URLs, titles, and excerpts.
+
 - Cancelling an eval now preserves received model text, reasoning, and server-tool records in the log as incomplete output.
 
 - OpenAI native and automatic compaction now enable mid-response compaction at the configured threshold, with live dashboard status and replayable eval logs.

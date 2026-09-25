@@ -16,6 +16,102 @@ from inspect_ai.model._providers.openrouter import (
 EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
 
 
+async def test_stream_citations_without_delta_indices() -> None:
+    import json
+    from collections.abc import AsyncIterator
+
+    from openai.types.chat import ChatCompletionChunk
+
+    from inspect_ai._util.content import ContentToolUse
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model._openrouter_stream import openrouter_stream_final
+    from inspect_ai.model._stream import ModelStreamObserver, model_stream_observer
+
+    citations = [
+        {
+            "type": "url_citation",
+            "url_citation": {
+                "url": "https://www.goodreads.com/work/quotes/40504417-churchill-by-himself",
+                "title": "Churchill By Himself Quotes by Winston S. Churchill",
+                "start_index": 0,
+                "end_index": 0,
+                "content": "Golf Like chasing a quinine pill around a cow pasture.",
+            },
+        },
+        {
+            "type": "url_citation",
+            "url_citation": {
+                "url": "https://example.com/second",
+                "title": "Second source",
+                "start_index": 10,
+                "end_index": 20,
+                "content": "Another excerpt.",
+            },
+        },
+    ]
+    event = ModelEvent(
+        model="test",
+        input=[],
+        tools=[],
+        tool_choice="auto",
+        config=GenerateConfig(),
+        output=ModelOutput.from_content("test", ""),
+        pending=True,
+    )
+    observer = ModelStreamObserver("test", None)
+    await observer.begin_attempt(event)
+    chunks = [
+        ChatCompletionChunk.model_validate(
+            {
+                "id": "r",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "anthropic/claude-opus-5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": str(index), "annotations": [citation]},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+        for index, citation in enumerate(citations)
+    ]
+
+    async def stream() -> AsyncIterator[ChatCompletionChunk]:
+        for index, chunk in enumerate(chunks):
+            yield chunk
+            content = event.output.message.content
+            assert isinstance(content, list)
+            sources = next(c for c in content if isinstance(c, ContentToolUse))
+            assert json.loads(sources.result) == [
+                c["url_citation"] for c in citations[: index + 1]
+            ]
+
+    with model_stream_observer(observer):
+        completion = await openrouter_stream_final(stream())
+    assert completion.choices[0].message.content == "01"
+    assert [
+        a.model_dump(exclude_none=True)
+        for a in completion.choices[0].message.annotations or []
+    ] == citations
+    # The caller's chunks are not modified when provider-specific fields are removed.
+    extra = chunks[0].choices[0].delta.model_extra
+    assert extra is not None
+    assert extra["annotations"] == [citations[0]]
+    message = (
+        _make_api("anthropic/claude-opus-5")
+        .chat_choices_from_completion(completion, [])[0]
+        .message
+    )
+    assert isinstance(message.content, list)
+    assert isinstance(message.content[-1], ContentToolUse)
+    assert json.loads(message.content[-1].result) == [
+        c["url_citation"] for c in citations
+    ]
+
+
 def _has_cache_control(block: Any) -> bool:
     return isinstance(block, dict) and block.get("cache_control") == EPHEMERAL
 

@@ -5,6 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat.chat_completion_message import Annotation
 
 from inspect_ai._util.content import Content, ContentToolUse
 
@@ -94,6 +95,7 @@ async def openrouter_stream_final(
     text, signatures, encrypted data and tool argument/result fragments append.
     """
     details: dict[int, dict[str, dict[str, Any]]] = {}
+    annotations: dict[int, list[Annotation]] = {}
 
     async def chunks() -> AsyncIterator[ChatCompletionChunk]:
         async for chunk in stream:
@@ -101,6 +103,17 @@ async def openrouter_stream_final(
             for choice in chunk.choices:
                 delta = choice.delta
                 raw_details = (delta.model_extra or {}).pop("reasoning_details", None)
+                # OpenRouter sends complete citations without delta indices.
+                # The OpenAI accumulator interprets object lists as indexed
+                # fragments, so keep these records out of that accumulator.
+                raw_annotations = (delta.model_extra or {}).pop("annotations", None)
+                if raw_annotations is not None:
+                    if not isinstance(raw_annotations, list):
+                        raise ValueError("OpenRouter annotations must be a list")
+                    annotations.setdefault(choice.index, []).extend(
+                        Annotation.model_validate(annotation)
+                        for annotation in raw_annotations
+                    )
                 display = choice.index == 0 and model_stream_partial_requested()
                 readable = False
                 if raw_details is not None and not isinstance(raw_details, list):
@@ -166,7 +179,7 @@ async def openrouter_stream_final(
                                     readable = True
                 if display:
                     sources = search_sources_content(
-                        getattr(delta, "annotations", None),
+                        annotations.get(choice.index) if raw_annotations else None,
                         f"{chunk.id}-sources-{choice.index}",
                     )
                     if sources is not None:
@@ -186,6 +199,8 @@ async def openrouter_stream_final(
         chunks(), publish_partial=False
     )
     for choice in completion.choices:
+        if choice.index in annotations:
+            choice.message.annotations = annotations[choice.index]
         records = details.get(choice.index)
         if records:
             extra = choice.message.model_extra
