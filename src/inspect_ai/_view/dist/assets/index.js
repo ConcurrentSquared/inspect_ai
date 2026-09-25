@@ -73778,7 +73778,7 @@ var CompactionData_module_default = {
 //#region ../../packages/inspect-components/src/chat/content-data/CompactionData.tsx
 var kCompactionMetadata = "compaction_metadata";
 var CompactionData = (t0) => {
-	const $ = (0, import_compiler_runtime.c)(21);
+	const $ = (0, import_compiler_runtime.c)(22);
 	const { id, data } = t0;
 	const raw = data[kCompactionMetadata];
 	let t1;
@@ -73788,50 +73788,64 @@ var CompactionData = (t0) => {
 		$[1] = t1;
 	} else t1 = $[1];
 	const compactionMetadata = t1;
+	if (compactionMetadata.type === "anthropic_compact" && compactionMetadata.status === "in_progress") {
+		let t2;
+		if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+			t2 = /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
+				className: clsx(CompactionData_module_default.content, "text-size-small"),
+				children: /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
+					className: clsx("text-style-label", CompactionData_module_default.title),
+					children: "Compacting context…"
+				})
+			});
+			$[2] = t2;
+		} else t2 = $[2];
+		return t2;
+	}
 	if (compactionMetadata.type === "openai_compact") {
 		const pending = compactionMetadata.status === "in_progress";
 		let t2;
 		let t3;
-		if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+		if ($[3] === Symbol.for("react.memo_cache_sentinel")) {
 			t2 = clsx(CompactionData_module_default.content, "text-size-small");
 			t3 = clsx("text-style-label", CompactionData_module_default.title);
-			$[2] = t2;
-			$[3] = t3;
+			$[3] = t2;
+			$[4] = t3;
 		} else {
-			t2 = $[2];
-			t3 = $[3];
+			t2 = $[3];
+			t3 = $[4];
 		}
 		const t4 = pending ? "Compacting context…" : "Context compacted";
 		let t5;
-		if ($[4] !== t4) {
+		if ($[5] !== t4) {
 			t5 = /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
 				className: t3,
 				children: t4
 			});
-			$[4] = t4;
-			$[5] = t5;
-		} else t5 = $[5];
+			$[5] = t4;
+			$[6] = t5;
+		} else t5 = $[6];
 		const t6 = pending ? "OpenAI is compacting the conversation." : "OpenAI returned encrypted context for subsequent turns.";
 		let t7;
-		if ($[6] !== t6) {
+		if ($[7] !== t6) {
 			t7 = /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
 				className: "text-style-secondary",
 				children: t6
 			});
-			$[6] = t6;
-			$[7] = t7;
-		} else t7 = $[7];
+			$[7] = t6;
+			$[8] = t7;
+		} else t7 = $[8];
 		let t8;
-		if ($[8] !== compactionMetadata.id) {
+		if ($[9] !== compactionMetadata.id) {
 			t8 = typeof compactionMetadata.id === "string" ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
 				className: "text-style-secondary",
 				children: compactionMetadata.id
 			}) : null;
-			$[8] = compactionMetadata.id;
-			$[9] = t8;
-		} else t8 = $[9];
+			$[9] = compactionMetadata.id;
+			$[10] = t8;
+		} else t8 = $[10];
 		let t9;
-		if ($[10] !== t5 || $[11] !== t7 || $[12] !== t8) {
+		if ($[11] !== t5 || $[12] !== t7 || $[13] !== t8) {
 			t9 = /*#__PURE__*/ (0, import_jsx_runtime.jsxs)("div", {
 				className: t2,
 				children: [
@@ -73840,15 +73854,15 @@ var CompactionData = (t0) => {
 					t8
 				]
 			});
-			$[10] = t5;
-			$[11] = t7;
-			$[12] = t8;
-			$[13] = t9;
-		} else t9 = $[13];
+			$[11] = t5;
+			$[12] = t7;
+			$[13] = t8;
+			$[14] = t9;
+		} else t9 = $[14];
 		return t9;
 	}
 	let t2;
-	if ($[14] !== compactionMetadata || $[15] !== id) {
+	if ($[15] !== compactionMetadata || $[16] !== id) {
 		t2 = compactionMetadata.type === "anthropic_compact" ? /*#__PURE__*/ (0, import_jsx_runtime.jsx)(ExpandablePanel, {
 			id: `${id}-compacted-content`,
 			collapse: true,
@@ -73859,34 +73873,34 @@ var CompactionData = (t0) => {
 			entries: compactionMetadata,
 			options: { copyButton: true }
 		});
-		$[14] = compactionMetadata;
-		$[15] = id;
-		$[16] = t2;
-	} else t2 = $[16];
+		$[15] = compactionMetadata;
+		$[16] = id;
+		$[17] = t2;
+	} else t2 = $[17];
 	const compactionContent = t2;
 	let t3;
 	let t4;
-	if ($[17] === Symbol.for("react.memo_cache_sentinel")) {
+	if ($[18] === Symbol.for("react.memo_cache_sentinel")) {
 		t3 = clsx(CompactionData_module_default.content, "text-size-small");
 		t4 = /*#__PURE__*/ (0, import_jsx_runtime.jsx)("div", {
 			className: clsx("text-style-label", "text-style-secondary", CompactionData_module_default.title),
 			children: "Compacted Content"
 		});
-		$[17] = t3;
-		$[18] = t4;
+		$[18] = t3;
+		$[19] = t4;
 	} else {
-		t3 = $[17];
-		t4 = $[18];
+		t3 = $[18];
+		t4 = $[19];
 	}
 	let t5;
-	if ($[19] !== compactionContent) {
+	if ($[20] !== compactionContent) {
 		t5 = /*#__PURE__*/ (0, import_jsx_runtime.jsxs)("div", {
 			className: t3,
 			children: [t4, compactionContent]
 		});
-		$[19] = compactionContent;
-		$[20] = t5;
-	} else t5 = $[20];
+		$[20] = compactionContent;
+		$[21] = t5;
+	} else t5 = $[21];
 	return t5;
 };
 var ContentDataView_module_default = { contentData: "_contentData_1lrx1_1" };

@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Direct Anthropic requests now stream search inputs, results, and compaction progress into the dashboard, using the configured compaction threshold.
+
 - Fixed OpenRouter web-search streams failing on source citations without delta indices, preserving returned URLs, titles, and excerpts.
 
 - Cancelling an eval now preserves received model text, reasoning, and server-tool records in the log as incomplete output.

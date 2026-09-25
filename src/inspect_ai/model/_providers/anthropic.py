@@ -16,6 +16,7 @@ from typing import (
     Union,
     cast,
 )
+from uuid import uuid4
 
 import anthropic
 import httpx2
@@ -200,7 +201,9 @@ from .._stream import (
     StreamReasoningEvent,
     StreamTextEvent,
     StreamToolCallEvent,
+    model_stream_partial_requested,
     model_stream_requested,
+    report_model_stream_content,
     report_model_stream_delta,
     report_model_stream_progress,
     report_model_stream_start,
@@ -607,6 +610,31 @@ class AnthropicAPI(ModelAPI):
                     "diagnostics": {"previous_message_id": prev_id},
                 }
 
+            selected_compaction = (
+                (input[-1].metadata or {}).get("inspect_anthropic_compaction")
+                if input
+                else None
+            )
+            if (
+                isinstance(selected_compaction, dict)
+                and self.is_claude_frontier()
+                and selected_compaction["threshold"] >= MIN_COMPACTION_TOKENS
+                and CONTEXT_MANAGEMENT not in (config.extra_body or {})
+                and not _request_has_edit_compaction(request)
+            ):
+                edit: dict[str, Any] = {
+                    "type": COMPACT_20260112,
+                    "trigger": {
+                        "type": "input_tokens",
+                        "value": selected_compaction["threshold"],
+                    },
+                }
+                if selected_compaction.get("instructions") is not None:
+                    edit["instructions"] = selected_compaction["instructions"]
+                request.setdefault(EXTRA_BODY, {}).setdefault(
+                    CONTEXT_MANAGEMENT, {}
+                ).setdefault(EDITS, []).append(edit)
+
             # add compaction if the input has it and there is no config
             if _input_has_compaction(input) and not _request_has_edit_compaction(
                 request
@@ -646,11 +674,14 @@ class AnthropicAPI(ModelAPI):
 
             model_call = set_active_model_event_call(request, model_call_filter)
 
-            # stream if the caller passed on_stream or (in auto mode) when
-            # using reasoning or >= 8192 max_tokens; an explicit streaming
-            # model arg overrides both
+            # Dashboard snapshots need the same stream as callbacks. An explicit
+            # streaming model argument still overrides automatic selection.
             streaming = (
-                (self.auto_streaming(config) or model_stream_requested())
+                (
+                    self.auto_streaming(config)
+                    or model_stream_requested()
+                    or model_stream_partial_requested()
+                )
                 if self.streaming is None
                 else self.streaming
             )
@@ -4328,6 +4359,24 @@ async def _capture_compaction_from_stream(
     # tool_use blocks by content index, so input_json_delta fragments can be
     # attributed to their call id / function when reported as stream deltas
     tool_blocks: dict[int, Any] = {}
+    web_blocks: dict[str, ContentToolUse] = {}
+    web_arguments: dict[int, str] = {}
+    compactions: dict[int, str | None] = {}
+    stream_id = uuid4().hex
+
+    def publish_compaction(index: int, pending: bool) -> None:
+        report_model_stream_content(
+            ContentData(
+                data={
+                    "compaction_metadata": {
+                        "type": "anthropic_compact",
+                        "id": f"{stream_id}-{index}",
+                        "status": "in_progress" if pending else "completed",
+                        "content": compactions.get(index),
+                    }
+                }
+            )
+        )
 
     report_model_stream_start()
 
@@ -4343,10 +4392,67 @@ async def _capture_compaction_from_stream(
         if event.type == "message_delta":
             container = getattr(event.delta, "container", None) or container
         if (
-            hasattr(event, "delta")
+            event.type == "content_block_delta"
             and getattr(event.delta, "type", None) == "compaction_delta"
         ):
             compaction_content = getattr(event.delta, "content", None)
+            compactions[event.index] = compaction_content
+
+        display = model_stream_partial_requested()
+        if display:
+            if event.type == "content_block_start":
+                block = event.content_block
+                if str(block.type) == "compaction":
+                    compactions[event.index] = getattr(block, "content", None)
+                    publish_compaction(event.index, True)
+                elif block.type == "server_tool_use" and block.name in (
+                    "web_search",
+                    "web_fetch",
+                ):
+                    web_blocks[block.id] = ContentToolUse(
+                        tool_type="web_search",
+                        id=block.id,
+                        name=block.name,
+                        arguments=to_json_str_safe(block.input) if block.input else "",
+                        result="",
+                    )
+                    web_arguments[event.index] = ""
+                    report_model_stream_content(web_blocks[block.id])
+                elif block.type in ("web_search_tool_result", "web_fetch_tool_result"):
+                    tool = web_blocks.get(block.tool_use_id)
+                    if tool is not None:
+                        result = block.content
+                        tool.result = (
+                            web_search_result_block_adapter.dump_json(
+                                block.content, exclude_none=True
+                            ).decode()
+                            if block.type == "web_search_tool_result"
+                            else to_json_tool_result_safe(block)
+                        )
+                        tool.error = getattr(result, "error_code", None)
+                        report_model_stream_content(tool)
+            elif event.type == "content_block_delta":
+                if str(event.delta.type) == "compaction_delta":
+                    publish_compaction(event.index, True)
+                elif event.delta.type == "text_delta":
+                    report_model_stream_content(StreamTextEvent(text=event.delta.text))
+                elif event.delta.type == "thinking_delta":
+                    report_model_stream_content(
+                        StreamReasoningEvent(reasoning=event.delta.thinking)
+                    )
+                elif (
+                    event.delta.type == "input_json_delta"
+                    and event.index in web_arguments
+                ):
+                    web_arguments[event.index] += event.delta.partial_json
+                    tool = web_blocks[tool_blocks[event.index].id]
+                    tool.arguments = web_arguments[event.index]
+                    report_model_stream_content(tool, force=False)
+            elif event.type == "content_block_stop":
+                if event.index in compactions:
+                    publish_compaction(event.index, False)
+                elif event.index in web_arguments:
+                    report_model_stream_content(web_blocks[tool_blocks[event.index].id])
 
         # report the chunk to the model layer's stream observer: content
         # deltas by kind (gated on model_stream_requested() — see
@@ -4366,10 +4472,13 @@ async def _capture_compaction_from_stream(
             # misparses compaction_delta as TextDelta(type="compaction_delta",
             # text=None) -- an isinstance check would report it as text
             elif event.delta.type == "text_delta":
-                await report_model_stream_delta(StreamTextEvent(text=event.delta.text))
+                await report_model_stream_delta(
+                    StreamTextEvent(text=event.delta.text), publish_partial=not display
+                )
             elif event.delta.type == "thinking_delta":
                 await report_model_stream_delta(
-                    StreamReasoningEvent(reasoning=event.delta.thinking)
+                    StreamReasoningEvent(reasoning=event.delta.thinking),
+                    publish_partial=not display,
                 )
             elif event.delta.type == "input_json_delta":
                 tool_block = tool_blocks.get(event.index)
@@ -4397,11 +4506,12 @@ async def _capture_compaction_from_stream(
         message.container = container
 
     # Fix up compaction blocks with captured content
-    if compaction_content is not None:
-        for block in message.content:
-            if getattr(block, "type", None) == "compaction":
-                setattr(block, "content", compaction_content)
-                break
+    for index, summary in compactions.items():
+        if (
+            index < len(message.content)
+            and getattr(message.content[index], "type", None) == "compaction"
+        ):
+            setattr(message.content[index], "content", summary)
 
     return message, compaction_content
 

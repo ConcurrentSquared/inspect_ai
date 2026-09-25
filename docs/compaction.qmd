@@ -107,6 +107,8 @@ For OpenAI Responses, `CompactionNative` and `CompactionAuto` also enable server
 
 The dashboard displays compaction as it starts and completes, without requiring an `on_stream` callback. Completed encrypted compaction items are retained in eval logs and replayed on subsequent requests. The provider does not expose a readable summary. Existing between-turn compaction, including its `instructions` and memory warnings, remains in place; those options do not control OpenAI's inline compaction pass.
 
+For the direct Anthropic API, these strategies also configure inline compaction on supported Claude models, using the resolved threshold and `instructions`. Thresholds below Anthropic's 50,000-token minimum retain between-turn compaction only. Explicit `GenerateConfig.extra_body.context_management` settings take precedence. The dashboard shows compaction progress followed by the readable summary, which is saved in eval logs and replayed on subsequent turns. Anthropic sends the completed summary in one delta rather than streaming its text token by token.
+
 Here are all options available for `CompactionNative`:
 
 | Parameter | Default | Description |

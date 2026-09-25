@@ -2895,3 +2895,286 @@ async def test_reasoning_tokens_fall_back_to_counting_thinking_text() -> None:
 
     assert output.usage is not None
     assert output.usage.reasoning_tokens == 37
+
+
+@pytest.mark.parametrize("strategy_name", ["native", "auto"])
+@pytest.mark.parametrize("threshold", [258400, 0.8, 40000])
+async def test_anthropic_inline_compaction_threshold(
+    monkeypatch: pytest.MonkeyPatch, strategy_name: str, threshold: int | float
+) -> None:
+    from anthropic.types import Message
+
+    from inspect_ai.model import CompactionAuto, CompactionNative, compaction
+
+    model = get_model("anthropic/claude-opus-5", api_key="test", streaming=False)
+    monkeypatch.setattr(model, "count_tokens", AsyncMock(return_value=10))
+    monkeypatch.setattr(model, "count_tool_tokens", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        "inspect_ai.model._compaction._compaction.get_model_input_tokens",
+        lambda model: 400000,
+    )
+    strategy = {"native": CompactionNative, "auto": CompactionAuto}[strategy_name](
+        threshold=threshold, instructions="Retain source URLs."
+    )
+    messages: list[ChatMessage] = [ChatMessageUser(content="Continue")]
+    compacted, _ = await compaction(strategy, prefix=[], model=model).compact_input(
+        messages
+    )
+    final = Message.model_validate(
+        dict(
+            id="msg_1",
+            type="message",
+            role="assistant",
+            model="claude-opus-5",
+            content=[dict(type="text", text="Done")],
+            stop_reason="end_turn",
+            usage=dict(input_tokens=10, output_tokens=1),
+        )
+    )
+    api = cast(AnthropicAPI, model.api)
+    create = AsyncMock(return_value=final)
+    monkeypatch.setattr(api.client.messages, "create", create)
+    await api.generate(compacted, [], "auto", GenerateConfig())
+    request = create.call_args.kwargs
+    if threshold == 40000:
+        assert "context_management" not in request.get("extra_body", {})
+    else:
+        assert request["extra_body"]["context_management"]["edits"] == [
+            dict(
+                type="compact_20260112",
+                trigger=dict(
+                    type="input_tokens", value=258400 if threshold == 258400 else 320000
+                ),
+                instructions="Retain source URLs.",
+            )
+        ]
+        assert "compact-2026-01-12" in request["extra_headers"]["anthropic-beta"]
+    assert messages[0].metadata is None
+    assert model.config.extra_body is None
+
+    await api.generate(
+        compacted,
+        [],
+        "auto",
+        GenerateConfig(extra_body={"context_management": {"edits": []}}),
+    )
+    assert create.call_args.kwargs["extra_body"]["context_management"] == {"edits": []}
+
+
+@pytest.mark.parametrize("tool_name", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_anthropic_live_server_content_without_callback(
+    tool_name: str, cancel: bool
+) -> None:
+    import anyio
+    from anthropic._models import construct_type
+    from anthropic.types import Message, RawMessageStreamEvent
+
+    from inspect_ai._util.content import ContentData
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model import ModelOutput
+    from inspect_ai.model._providers.anthropic import _capture_compaction_from_stream
+    from inspect_ai.model._stream import ModelStreamObserver, model_stream_observer
+
+    event = ModelEvent(
+        model="test",
+        input=[],
+        tools=[],
+        tool_choice="auto",
+        config=GenerateConfig(),
+        output=ModelOutput.from_content("test", ""),
+        pending=True,
+    )
+    observer = ModelStreamObserver("test", None)
+    await observer.begin_attempt(event)
+    blocks = [
+        {"type": "server_tool_use", "id": "srv_1", "name": tool_name, "input": {}},
+        {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srv_1",
+            "content": [
+                {
+                    "type": "web_search_result",
+                    "url": "https://example.com",
+                    "title": "Example",
+                    "encrypted_content": "opaque",
+                    "page_age": None,
+                }
+            ],
+        },
+        {"type": "compaction", "content": None},
+        {"type": "compaction", "content": None},
+    ]
+    if tool_name == "web_fetch":
+        blocks[1] = {
+            "type": "web_fetch_tool_result",
+            "tool_use_id": "srv_1",
+            "content": {
+                "type": "web_fetch_result",
+                "url": "https://example.com",
+                "retrieved_at": "2026-09-24T00:00:00Z",
+                "content": {
+                    "type": "document",
+                    "title": "Example",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": "Page contents.",
+                    },
+                    "citations": {"enabled": True},
+                },
+            },
+        }
+    snapshot = cast(
+        Message,
+        construct_type(
+            value=dict(
+                id="msg_1",
+                type="message",
+                role="assistant",
+                model="claude-opus-5",
+                content=blocks,
+                stop_reason="end_turn",
+                usage=dict(input_tokens=10, output_tokens=1),
+            ),
+            type_=Message,
+        ),
+    )
+
+    class FakeStream:
+        current_message_snapshot = snapshot
+
+        def __aiter__(self) -> Any:
+            async def events() -> Any:
+                for index, block in enumerate(blocks):
+                    yield construct_type(
+                        value=dict(
+                            type="content_block_start", index=index, content_block=block
+                        ),
+                        type_=RawMessageStreamEvent,
+                    )
+                    if index == 0:
+                        yield construct_type(
+                            value=dict(
+                                type="content_block_delta",
+                                index=0,
+                                delta=dict(
+                                    type="input_json_delta",
+                                    partial_json='{"query":"example"}',
+                                ),
+                            ),
+                            type_=RawMessageStreamEvent,
+                        )
+                    elif index >= 2:
+                        content = event.output.message.content[-1]
+                        assert isinstance(content, ContentData)
+                        metadata = content.data["compaction_metadata"]
+                        assert isinstance(metadata, dict)
+                        assert metadata["status"] == "in_progress"
+                        yield construct_type(
+                            value=dict(
+                                type="content_block_delta",
+                                index=index,
+                                delta=dict(
+                                    type="compaction_delta", content=f"Summary {index}"
+                                ),
+                            ),
+                            type_=RawMessageStreamEvent,
+                        )
+                    yield construct_type(
+                        value=dict(type="content_block_stop", index=index),
+                        type_=RawMessageStreamEvent,
+                    )
+                    if index == 1:
+                        tool = event.output.message.content[0]
+                        assert isinstance(tool, ContentToolUse)
+                        assert tool.arguments == '{"query":"example"}'
+                        assert "https://example.com" in tool.result
+                        if cancel:
+                            scope.cancel()
+                            try:
+                                await anyio.sleep_forever()
+                            finally:
+                                cleaned.append(True)
+
+            return events()
+
+    cleaned: list[bool] = []
+    with model_stream_observer(observer), anyio.CancelScope() as scope:
+        message, _ = await _capture_compaction_from_stream(cast(Any, FakeStream()))
+        assert getattr(message.content[2], "content") == "Summary 2"
+        assert getattr(message.content[3], "content") == "Summary 3"
+        from inspect_ai.model._providers.anthropic import (
+            _compaction_from_content_data,
+            content_and_tool_calls_from_assistant_content_blocks,
+        )
+
+        final_content, _ = content_and_tool_calls_from_assistant_content_blocks(
+            message.content, []
+        )
+        saved = ChatMessageAssistant.model_validate_json(
+            ChatMessageAssistant(content=final_content).model_dump_json()
+        )
+        summaries = [
+            _compaction_from_content_data(item)
+            for item in saved.content
+            if isinstance(item, ContentData)
+        ]
+        assert summaries == [
+            {"type": "compaction", "content": "Summary 2"},
+            {"type": "compaction", "content": "Summary 3"},
+        ]
+    if cancel:
+        observer.preserve_cancelled_output()
+        assert cleaned == [True]
+        assert event.output.metadata == {"partial": True, "interruption": "cancelled"}
+    restored = ModelEvent.model_validate_json(event.model_dump_json())
+    assert restored.output.message.content == event.output.message.content
+    assert len(restored.output.message.content) == (1 if cancel else 3)
+
+
+@pytest.mark.parametrize("streaming", ["auto", False])
+async def test_anthropic_dashboard_enables_streaming(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool | Literal["auto"]
+) -> None:
+    from anthropic.types import Message
+
+    from inspect_ai.event import ModelEvent
+    from inspect_ai.model import ModelOutput
+    from inspect_ai.model._stream import ModelStreamObserver, model_stream_observer
+
+    output = ModelOutput.from_content("claude-opus-5", "Done")
+    response = Message.model_validate(
+        dict(
+            id="msg_1",
+            type="message",
+            role="assistant",
+            model="claude-opus-5",
+            content=[dict(type="text", text="Done")],
+            stop_reason="end_turn",
+            usage=dict(input_tokens=10, output_tokens=1),
+        )
+    )
+    api = AnthropicAPI("claude-opus-5", api_key="test", streaming=streaming)
+    perform = AsyncMock(return_value=(response, output))
+    monkeypatch.setattr(api, "_perform_request_and_continuations", perform)
+    observer = ModelStreamObserver("test", None)
+    await observer.begin_attempt(
+        ModelEvent(
+            model="test",
+            input=[],
+            tools=[],
+            tool_choice="auto",
+            config=GenerateConfig(),
+            output=ModelOutput.from_content("test", ""),
+            pending=True,
+        )
+    )
+    with model_stream_observer(observer):
+        await api.generate(
+            [ChatMessageUser(content="Go")],
+            [],
+            "auto",
+            GenerateConfig(max_tokens=10, reasoning_effort="none"),
+        )
+    assert perform.call_args.args[1] is (streaming == "auto")

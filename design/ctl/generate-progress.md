@@ -237,3 +237,28 @@ dataframes, hooks, assistant replay, and the shared ts-mono content-data rendere
 continues to replay and render. Tests cover strategy threshold resolution and
 isolation, saved-message round trips, ordered replay, live snapshots without a
 callback, and mid-stream cancellation/connection cleanup under both async backends.
+
+### Direct Anthropic server tools and inline compaction
+
+The direct Anthropic provider enables streaming when a pending model event accepts
+partial output, without requiring an on_stream callback. Search/fetch starts and
+input JSON deltas upsert ContentToolUse records; result blocks fill their existing
+result/error fields. Text and reasoning continue in response order. URLs remain
+plain text in the shared renderer. Final response conversion and assistant replay
+use the existing Anthropic server-tool records, including encrypted search content.
+
+Native/Auto compactors carry the resolved threshold and optional instructions in
+the copied final input message's private inspect_anthropic_compaction metadata.
+Supported models receive compact_20260112 with an input_tokens trigger and the
+compaction beta header. Explicit extra_body.context_management takes precedence;
+thresholds below 50,000 retain the existing between-turn behavior.
+
+Compaction start/delta/stop events upsert existing ContentData compaction_metadata
+records by a request-local id, with in_progress/completed status and summary.
+Multiple summary blocks are restored independently in the SDK's final snapshot.
+The viewer shows pending status then the readable summary. No public schema or
+callback union changes: producers are the compactor and Anthropic stream converter;
+consumers are the request builder, stream observer, transcript/realtime buffer,
+eval log readers, hooks, dataframes, assistant replay, and shared content renderer.
+Completed outputs retain their existing replay representation. Cancelled snapshots
+remain diagnostic partial output and are not replayed as assistant messages.

@@ -332,9 +332,20 @@ def compaction(
             if (
                 compacted
                 and isinstance(strategy, CompactionNative | CompactionAuto)
-                and ModelName(target_model).api == "openai"
+                and ModelName(target_model).api in ("openai", "anthropic")
             ):
-                from .._openai_responses import OPENAI_COMPACTION_THRESHOLD
+                metadata: dict[str, object]
+                if ModelName(target_model).api == "openai":
+                    from .._openai_responses import OPENAI_COMPACTION_THRESHOLD
+
+                    metadata = {OPENAI_COMPACTION_THRESHOLD: threshold}
+                else:
+                    metadata = {
+                        "inspect_anthropic_compaction": {
+                            "threshold": threshold,
+                            "instructions": strategy._instructions,
+                        }
+                    }
 
                 # Keep the threshold local to this request: models are shared
                 # across samples and may have several different compactors.
@@ -342,7 +353,7 @@ def compaction(
                     update={
                         "metadata": {
                             **(compacted[-1].metadata or {}),
-                            OPENAI_COMPACTION_THRESHOLD: threshold,
+                            **metadata,
                         }
                     }
                 )
